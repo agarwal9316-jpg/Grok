@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from grok_org_os.api.deps import get_db
@@ -73,7 +73,7 @@ def create_approval(payload: ApprovalCreate, db: Session = Depends(get_db)) -> A
 @router.post("/{approval_id}/approve", response_model=ApprovalRead)
 def approve(
     approval_id: int,
-    payload: ApprovalDecision | None = None,
+    payload: ApprovalDecision | None = Body(default=None),
     db: Session = Depends(get_db),
 ) -> ApprovalRead:
     a = db.get(Approval, approval_id)
@@ -123,7 +123,7 @@ def approve(
 @router.post("/{approval_id}/reject", response_model=ApprovalRead)
 def reject(
     approval_id: int,
-    payload: ApprovalDecision | None = None,
+    payload: ApprovalDecision | None = Body(default=None),
     db: Session = Depends(get_db),
 ) -> ApprovalRead:
     a = db.get(Approval, approval_id)

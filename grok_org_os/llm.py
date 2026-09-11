@@ -131,14 +131,13 @@ class LLMClient:
             )
             tool_calls = assistant.get("tool_calls") or []
             content = assistant.get("content")
-            # Append assistant turn
-            msgs.append(
-                {
-                    "role": "assistant",
-                    "content": content,
-                    **({"tool_calls": tool_calls} if tool_calls else {}),
-                }
-            )
+            # Append assistant turn (OpenAI wants content null when tool_calls present)
+            assistant_msg: dict[str, Any] = {"role": "assistant", "content": content}
+            if tool_calls:
+                assistant_msg["tool_calls"] = tool_calls
+                if content is None:
+                    assistant_msg["content"] = None
+            msgs.append(assistant_msg)
             if not tool_calls:
                 final = content or ""
                 break
@@ -235,10 +234,7 @@ class LLMClient:
                         },
                     )
                 )
-            if "create_task" in tool_names and (
-                "decompose" in lower or "break down" in lower or "subtask" in lower or "coordinate" in lower
-                or "task" in lower or True
-            ):
+            if "create_task" in tool_names:
                 for focus in ("Ops", "Research", "Comms"):
                     cid += 1
                     calls.append(

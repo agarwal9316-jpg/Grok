@@ -299,3 +299,89 @@ def test_tool_definitions_include_required():
         "request_approval",
     ):
         assert required in names
+
+
+def test_concurrent_workers_submit(db, mock_llm):
+    """Multiple specialist tasks can be submitted to the thread pool."""
+    import time
+    from grok_org_os.runtime import AgentRuntime
+
+    data = bootstrap_sample_org(db, name="Concurrent Org")
+    org = data["organisation"]
+    channel = data["channel"]
+    specialists = [data["agents"]["ops"], data["agents"]["research"], data["agents"]["comms"]]
+    runtime = AgentRuntime(llm=mock_llm, max_workers=3)
+    ids = []
+    for sp in specialists:
+        task = Task(
+            organisation_id=org.id,
+            title=f"Work for {sp.name}",
+            description="Parallel specialist work",
+            status=TaskStatus.assigned,
+            assignee_id=sp.id,
+            channel_id=channel.id,
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        ids.append(task.id)
+        runtime.submit_task(task.id)
+
+    # Wait for pool jobs
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        db.expire_all()
+        statuses = [db.get(Task, i).status for i in ids]
+        if all(s == TaskStatus.done for s in statuses):
+            break
+        time.sleep(0.2)
+    runtime.stop()
+    db.expire_all()
+    assert all(db.get(Task, i).status == TaskStatus.done for i in ids)
+    assert all(db.get(Task, i).result for i in ids)
+
+
+def test_live_tool_payload_includes_tools(monkeypatch):
+    """With API key, request body must include tools for function calling."""
+    from grok_org_os.llm import LLMClient
+    from unittest.mock import patch
+
+    captured = {}
+
+    class FakeResp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {"message": {"role": "assistant", "content": "ok", "tool_calls": []}}
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            captured["json"] = json
+            captured["headers"] = headers
+            return FakeResp()
+
+    client = LLMClient(api_key="sk-live", base_url="https://api.openai.com/v1", model="gpt-4o-mini")
+    with patch("grok_org_os.llm.httpx.Client", FakeClient):
+        client.chat_message(
+            [{"role": "user", "content": "hi"}],
+            tools=TOOL_DEFINITIONS,
+        )
+    assert "tools" in captured["json"]
+    assert captured["json"]["tool_choice"] == "auto"
+    assert captured["headers"]["Authorization"].startswith("Bearer sk-live")
+    names = {t["function"]["name"] for t in captured["json"]["tools"]}
+    assert "request_approval" in names and "http_fetch" in names

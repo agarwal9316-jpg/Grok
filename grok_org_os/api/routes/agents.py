@@ -23,6 +23,7 @@ def create_agent(payload: AgentCreate, db: Session = Depends(get_db)) -> Agent:
         role=payload.role,
         is_human=payload.is_human,
         system_prompt=payload.system_prompt,
+        status="idle",
     )
     db.add(agent)
     db.commit()

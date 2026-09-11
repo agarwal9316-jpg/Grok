@@ -229,6 +229,7 @@ class AgentRuntime:
         self._bg_task = asyncio.create_task(_loop())
 
     def _claim_and_submit(self) -> None:
+        """Claim assigned AI tasks atomically, then run concurrently."""
         db = db_module.SessionLocal()
         try:
             tasks = (
@@ -237,13 +238,24 @@ class AgentRuntime:
                 .limit(8)
                 .all()
             )
+            claimed: list[int] = []
             for task in tasks:
-                if task.assignee and not task.assignee.is_human:
-                    # mark in_progress to avoid double claim
-                    task.status = TaskStatus.in_progress
-                    db.add(task)
-                    db.commit()
-                    self.submit_task(task.id)
+                if not task.assignee or task.assignee.is_human:
+                    continue
+                # Conditional update avoids double-run vs sync TaskRunner
+                updated = (
+                    db.query(Task)
+                    .filter(Task.id == task.id, Task.status == TaskStatus.assigned)
+                    .update(
+                        {"status": TaskStatus.in_progress},
+                        synchronize_session=False,
+                    )
+                )
+                db.commit()
+                if updated:
+                    claimed.append(task.id)
+            for tid in claimed:
+                self.submit_task(tid)
         finally:
             db.close()
 
