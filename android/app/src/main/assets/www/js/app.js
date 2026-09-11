@@ -1,4 +1,4 @@
-/* Grok Org OS 2.1 — Grok-class desk + model picker */
+/* Grok Org OS 2.1.2 — providers + robust model fetch/test */
 (() => {
   const state = {
     org: null,
@@ -37,7 +37,25 @@
     if (!(opts.body instanceof FormData)) {
       headers["Content-Type"] = headers["Content-Type"] || "application/json";
     }
-    const res = await fetch(path, { ...opts, headers });
+    const timeoutMs = opts.timeoutMs;
+    const { timeoutMs: _omit, ...fetchOpts } = opts;
+    let timer;
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    if (timeoutMs && controller) {
+      timer = setTimeout(() => controller.abort(), timeoutMs);
+      fetchOpts.signal = controller.signal;
+    }
+    let res;
+    try {
+      res = await fetch(path, { ...fetchOpts, headers });
+    } catch (e) {
+      if (e && (e.name === "AbortError" || /abort/i.test(String(e.message || "")))) {
+        throw new Error(`Request timed out after ${Math.round((timeoutMs || 0) / 1000)}s`);
+      }
+      throw e;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
     if (!res.ok) {
       let detail = res.statusText;
       try {
@@ -50,6 +68,86 @@
     const ct = res.headers.get("content-type") || "";
     if (ct.includes("application/json")) return res.json();
     return res;
+  }
+
+  const CUSTOM_PROVIDERS_KEY = "grok_custom_providers";
+
+  function loadCustomProviders() {
+    try {
+      const raw = localStorage.getItem(CUSTOM_PROVIDERS_KEY);
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function saveCustomProviders(list) {
+    localStorage.setItem(CUSTOM_PROVIDERS_KEY, JSON.stringify(list || []));
+  }
+
+  function formLlmOverrides() {
+    const payload = {};
+    const base = ($("#cfg-base")?.value || "").trim();
+    const model = ($("#cfg-model")?.value || "").trim();
+    const key = ($("#cfg-key")?.value || "").trim();
+    if (base) payload.openai_base_url = base;
+    if (model) payload.openai_model = model;
+    if (key) payload.openai_api_key = key;
+    return payload;
+  }
+
+  async function populateProviders(selectedBase) {
+    const sel = $("#cfg-provider");
+    if (!sel) return;
+    let providers = [];
+    try {
+      const res = await api("/api/providers", { timeoutMs: 15000 });
+      providers = res.providers || [];
+    } catch (_) {
+      providers = [
+        { id: "openai", name: "OpenAI", base_url: "https://api.openai.com/v1" },
+        { id: "nvidia", name: "NVIDIA NIM", base_url: "https://integrate.api.nvidia.com/v1" },
+        { id: "custom", name: "Custom", base_url: "" },
+      ];
+    }
+    const customs = loadCustomProviders();
+    sel.innerHTML = "";
+    providers.forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.name;
+      opt.dataset.baseUrl = p.base_url || "";
+      sel.appendChild(opt);
+    });
+    customs.forEach((c) => {
+      const opt = document.createElement("option");
+      opt.value = `custom:${c.name}`;
+      opt.textContent = `${c.name} (custom)`;
+      opt.dataset.baseUrl = c.base_url || "";
+      sel.appendChild(opt);
+    });
+    // Match current base URL
+    const base = (selectedBase || $("#cfg-base")?.value || "").trim().replace(/\/+$/, "");
+    let matched = "custom";
+    for (const opt of sel.options) {
+      const bu = (opt.dataset.baseUrl || "").replace(/\/+$/, "");
+      if (bu && base && (base === bu || base.startsWith(bu) || bu.startsWith(base))) {
+        matched = opt.value;
+        break;
+      }
+    }
+    if ([...sel.options].some((o) => o.value === matched)) sel.value = matched;
+    else if ([...sel.options].some((o) => o.value === "custom")) sel.value = "custom";
+    toggleCustomRow();
+  }
+
+  function toggleCustomRow() {
+    const row = $("#cfg-custom-row");
+    const sel = $("#cfg-provider");
+    if (!row || !sel) return;
+    const isCustom = !sel.value || sel.value === "custom" || sel.value.startsWith("custom:");
+    row.classList.toggle("hidden", !isCustom);
   }
 
   function roleClass(agent) {
@@ -169,7 +267,7 @@
 
   async function loadSettingsBadge() {
     try {
-      const s = await api("/api/config");
+      const s = await api("/api/config", { timeoutMs: 15000 });
       state.config = s;
       state.hasKey = !!s.has_llm_key;
       state.currentModel = s.openai_model || "gpt-4o-mini";
@@ -179,10 +277,11 @@
       $("#cfg-key").placeholder = s.api_key_set
         ? "•••••••• (saved — leave blank to keep)"
         : "sk-… (required for full power)";
+      await populateProviders(s.openai_base_url || "");
       syncModelUI(state.currentModel);
-      // Prefill picker from /api/models (mock or live)
+      // Prefill picker from /api/models (mock or live) — do not hang forever
       try {
-        const m = await api("/api/models");
+        const m = await api("/api/models", { timeoutMs: 45000 });
         if (m && (m.models || m.data)) {
           fillModelSelects(m.models || m.data, state.currentModel);
         } else {
@@ -214,31 +313,51 @@
       out.classList.remove("hidden");
       out.textContent = "Fetching models…";
     }
-    if (saveFirst) {
-      const payload = {
-        openai_base_url: ($("#cfg-base").value || "").trim() || undefined,
-        openai_model: ($("#cfg-model").value || "").trim() || undefined,
-      };
-      const key = ($("#cfg-key").value || "").trim();
-      if (key) payload.openai_api_key = key;
-      if (payload.openai_base_url || payload.openai_api_key || payload.openai_model) {
-        await api("/api/settings", { method: "PUT", body: JSON.stringify(payload) });
+    try {
+      const overrides = formLlmOverrides();
+      if (saveFirst && Object.keys(overrides).length) {
+        try {
+          await api("/api/settings", {
+            method: "PUT",
+            body: JSON.stringify(overrides),
+            timeoutMs: 15000,
+          });
+        } catch (e) {
+          // Still try fetch with body overrides even if save failed
+          console.warn("settings save before fetch failed", e);
+        }
+      }
+      const res = await api("/api/models", {
+        method: "POST",
+        body: JSON.stringify(overrides),
+        timeoutMs: 45000,
+      });
+      if (!res.ok && !(res.models || []).length) {
+        const err = res.error || "Failed to fetch models";
+        if (out) out.textContent = `FAIL: ${err}`;
+        throw new Error(err);
+      }
+      fillModelSelects(res.models || res.data || [], state.currentModel);
+      if (out) {
+        const note = res.note ? `\n${res.note}` : "";
+        out.textContent = res.ok
+          ? `Loaded ${(res.models || []).length} models (${res.mode})${note}`
+          : `FAIL: ${res.error || JSON.stringify(res, null, 2)}`;
+      }
+      return res;
+    } catch (e) {
+      const msg = e && e.message ? e.message : String(e);
+      if (out) {
+        out.classList.remove("hidden");
+        out.textContent = `FAIL: ${msg}`;
+      }
+      throw e;
+    } finally {
+      // Never leave "Fetching models…" forever
+      if (out && /Fetching models/i.test(out.textContent || "")) {
+        out.textContent = "FAIL: Fetch ended without a result";
       }
     }
-    const res = await api("/api/models", { method: "POST", body: "{}" });
-    if (!res.ok && !(res.models || []).length) {
-      const err = res.error || "Failed to fetch models";
-      if (out) out.textContent = err;
-      throw new Error(err);
-    }
-    fillModelSelects(res.models || res.data || [], state.currentModel);
-    if (out) {
-      const note = res.note ? `\n${res.note}` : "";
-      out.textContent = res.ok
-        ? `Loaded ${(res.models || []).length} models (${res.mode})${note}`
-        : res.error || JSON.stringify(res, null, 2);
-    }
-    return res;
   }
 
   async function refreshAll() {
@@ -855,53 +974,148 @@
     });
   });
 
+  $("#cfg-provider")?.addEventListener("change", () => {
+    const sel = $("#cfg-provider");
+    const opt = sel?.selectedOptions?.[0];
+    const bu = opt?.dataset?.baseUrl || "";
+    if (bu && $("#cfg-base")) $("#cfg-base").value = bu;
+    toggleCustomRow();
+  });
+
+  $("#cfg-add-provider")?.addEventListener("click", async () => {
+    const name = ($("#cfg-custom-name")?.value || "").trim();
+    const base = ($("#cfg-base")?.value || "").trim();
+    if (!name || !base) {
+      toast("Enter custom name + base URL", "error");
+      return;
+    }
+    const list = loadCustomProviders().filter((c) => c.name !== name);
+    list.push({ name, base_url: base });
+    saveCustomProviders(list);
+    await populateProviders(base);
+    toast(`Saved provider ${name}`, "success");
+  });
+
   $("#cfg-test").addEventListener("click", async () => {
     const out = $("#cfg-test-result");
     out.classList.remove("hidden");
     out.textContent = "Testing…";
     try {
-      // Save base/key first so test uses latest form values
-      const payload = {
-        openai_base_url: $("#cfg-base").value.trim() || undefined,
-        openai_model: $("#cfg-model").value.trim() || undefined,
-      };
-      const key = $("#cfg-key").value.trim();
-      if (key) payload.openai_api_key = key;
-      if (payload.openai_base_url || payload.openai_api_key || payload.openai_model) {
-        await api("/api/settings", { method: "PUT", body: JSON.stringify(payload) });
+      const overrides = formLlmOverrides();
+      if (Object.keys(overrides).length) {
+        try {
+          await api("/api/settings", {
+            method: "PUT",
+            body: JSON.stringify(overrides),
+            timeoutMs: 15000,
+          });
+        } catch (e) {
+          console.warn("settings save before test failed", e);
+        }
       }
-      const res = await api("/api/settings/test", { method: "POST", body: "{}" });
+      const res = await api("/api/settings/test", {
+        method: "POST",
+        body: JSON.stringify(overrides),
+        timeoutMs: 45000,
+      });
       if (res && res.ok === false) {
-        out.textContent = res.error || JSON.stringify(res, null, 2);
+        out.textContent = `FAIL: ${res.error || JSON.stringify(res, null, 2)}`;
       } else {
-        out.textContent = JSON.stringify(res, null, 2);
+        const mode = res?.mode || "?";
+        const model = res?.model || overrides.openai_model || "";
+        const msg = res?.message || "ok";
+        out.textContent = `PASS (${mode}) model=${model}\n${typeof msg === "string" ? msg : JSON.stringify(res, null, 2)}`;
       }
     } catch (e) {
-      out.textContent = e.message;
+      out.classList.remove("hidden");
+      out.textContent = `FAIL: ${e.message || e}`;
+    } finally {
+      out.classList.remove("hidden");
+      if (/^Testing/i.test(out.textContent || "")) {
+        out.textContent = "FAIL: Test ended without a result";
+      }
     }
   });
 
-  $("#settings-form").addEventListener("submit", async (ev) => {
+  async function saveSettingsFromForm() {
+    const out = $("#cfg-test-result");
+    const payload = formLlmOverrides();
+    // Always include model/base from fields even if empty-trimmed already handled
+    if (!payload.openai_base_url) {
+      const b = ($("#cfg-base")?.value || "").trim();
+      if (b) payload.openai_base_url = b;
+    }
+    if (!payload.openai_model) {
+      const m = ($("#cfg-model")?.value || "").trim();
+      if (m) payload.openai_model = m;
+    }
+    if (!Object.keys(payload).length) {
+      toast("Nothing to save", "error");
+      if (out) {
+        out.classList.remove("hidden");
+        out.textContent = "FAIL: Enter base URL, model, and/or API key";
+      }
+      return false;
+    }
+    try {
+      if (out) {
+        out.classList.remove("hidden");
+        out.textContent = "Saving…";
+      }
+      const s = await api("/api/settings", {
+        method: "PUT",
+        body: JSON.stringify(payload),
+        timeoutMs: 20000,
+      });
+      state.hasKey = !!s.has_llm_key;
+      state.currentModel = s.openai_model || payload.openai_model || state.currentModel;
+      state.config = s;
+      if (out) out.textContent = `Saved. has_llm_key=${!!s.has_llm_key} model=${s.openai_model || ""}`;
+      toast("Settings saved", "success");
+      syncModelUI(state.currentModel);
+      return true;
+    } catch (e) {
+      const msg = e && e.message ? e.message : String(e);
+      toast(msg, "error");
+      if (out) {
+        out.classList.remove("hidden");
+        out.textContent = `FAIL: ${msg}`;
+      }
+      return false;
+    }
+  }
+
+  $("#cfg-cancel")?.addEventListener("click", (ev) => {
     ev.preventDefault();
-    if (ev.submitter && ev.submitter.value === "cancel") {
-      $("#settings-dialog").close();
+    ev.stopPropagation();
+    $("#settings-dialog")?.close();
+  });
+
+  $("#cfg-save")?.addEventListener("click", async (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const ok = await saveSettingsFromForm();
+    if (ok) {
+      $("#settings-dialog")?.close();
+      try { await loadSettingsBadge(); } catch (_) {}
+    }
+  });
+
+  // Keep submit handler as safety net (Enter key) — never use method=dialog
+  $("#settings-form")?.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const action =
+      (ev.submitter && (ev.submitter.dataset?.action || ev.submitter.value || ev.submitter.id)) ||
+      "save";
+    if (action === "cancel" || action === "cfg-cancel") {
+      $("#settings-dialog")?.close();
       return;
     }
-    const payload = {
-      openai_base_url: $("#cfg-base").value.trim() || undefined,
-      openai_model: $("#cfg-model").value.trim() || undefined,
-    };
-    const key = $("#cfg-key").value.trim();
-    if (key) payload.openai_api_key = key;
-    try {
-      const s = await api("/api/settings", { method: "PUT", body: JSON.stringify(payload) });
-      state.hasKey = !!s.has_llm_key;
-      state.currentModel = s.openai_model || payload.openai_model;
-      toast("Settings saved", "success");
-      $("#settings-dialog").close();
-      await loadSettingsBadge();
-    } catch (e) {
-      toast(e.message, "error");
+    const ok = await saveSettingsFromForm();
+    if (ok) {
+      $("#settings-dialog")?.close();
+      try { await loadSettingsBadge(); } catch (_) {}
     }
   });
 

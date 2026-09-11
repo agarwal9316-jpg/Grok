@@ -38,6 +38,9 @@ def normalize_base_url(url: str) -> str:
         "api.groq.com/openai",
         "api.together.xyz",
         "api.fireworks.ai/inference",
+        "integrate.api.nvidia.com",
+        "api.deepseek.com",
+        "api.mistral.ai",
     )
     for h in hosts:
         if lower.rstrip("/").endswith(h) or f"://{h}" in lower or lower.endswith(h):
@@ -51,6 +54,58 @@ def normalize_base_url(url: str) -> str:
         return f"{u}/v1"
     return u
 
+
+
+
+def parse_models_payload(payload: Any) -> list[dict[str, str]]:
+    """Parse OpenAI-style {data:[{id}]} (or bare list) into [{id, owned_by}]."""
+    raw = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(raw, list):
+        raw = payload if isinstance(payload, list) else []
+    models: list[dict[str, str]] = []
+    for item in raw:
+        if isinstance(item, dict) and item.get("id"):
+            models.append(
+                {
+                    "id": str(item["id"]),
+                    "owned_by": str(item.get("owned_by") or item.get("ownedBy") or ""),
+                }
+            )
+        elif isinstance(item, str) and item.strip():
+            models.append({"id": item.strip(), "owned_by": ""})
+    return models
+
+
+def _looks_chat_capable(model_id: str) -> bool:
+    mid = (model_id or "").lower()
+    # Deprioritize obvious non-chat endpoints when sorting
+    skip = (
+        "embed",
+        "embedding",
+        "rerank",
+        "tts",
+        "whisper",
+        "transcri",
+        "moderation",
+        "dall-e",
+        "stable-diffusion",
+        "flux",
+        "image",
+        "video",
+        "codec",
+        "retrieve",
+    )
+    if any(s in mid for s in skip):
+        return False
+    return True
+
+
+def sort_models_chat_first(models: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Full list sorted: chat-capable first, then alphabetical within groups."""
+    return sorted(
+        models,
+        key=lambda m: (0 if _looks_chat_capable(m.get("id", "")) else 1, m.get("id", "").lower()),
+    )
 
 
 def _role_hint(system: str) -> str:
@@ -217,10 +272,14 @@ class LLMClient:
                 "models": list(MOCK_MODELS),
                 "data": list(MOCK_MODELS),
             }
-        url = f"{self.base_url}/models"
-        headers = {"Authorization": f"Bearer {self.api_key}"}
+        url = f"{self.base_url.rstrip('/')}/models"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "User-Agent": "GrokOrgOS/2.1.2",
+            "Accept": "application/json",
+        }
         try:
-            with httpx.Client(timeout=30.0) as client:
+            with httpx.Client(timeout=45.0, follow_redirects=True) as client:
                 resp = client.get(url, headers=headers)
                 if resp.status_code == 401:
                     return {
@@ -257,21 +316,8 @@ class LLMClient:
                         "data": [],
                     }
                 payload = resp.json()
-                raw = payload.get("data") if isinstance(payload, dict) else None
-                if not isinstance(raw, list):
-                    raw = payload if isinstance(payload, list) else []
-                models = []
-                for item in raw:
-                    if isinstance(item, dict) and item.get("id"):
-                        models.append(
-                            {
-                                "id": item["id"],
-                                "owned_by": item.get("owned_by") or item.get("ownedBy") or "",
-                            }
-                        )
-                    elif isinstance(item, str):
-                        models.append({"id": item, "owned_by": ""})
-                models.sort(key=lambda m: m["id"].lower())
+                models = parse_models_payload(payload)
+                models = sort_models_chat_first(models)
                 return {
                     "ok": True,
                     "mode": "live",
@@ -280,12 +326,21 @@ class LLMClient:
                     "data": models,
                     "count": len(models),
                 }
+        except httpx.TimeoutException as exc:
+            return {
+                "ok": False,
+                "mode": "live",
+                "base_url": self.base_url,
+                "error": f"Timeout after 45s fetching models from {url}: {exc}",
+                "models": [],
+                "data": [],
+            }
         except httpx.ConnectError as exc:
             return {
                 "ok": False,
                 "mode": "live",
                 "base_url": self.base_url,
-                "error": f"Connection failed to {url}: {exc}. Check base URL / network.",
+                "error": f"Connection failed to {url}: {exc}. Check base URL / network / SSL.",
                 "models": [],
                 "data": [],
             }
@@ -307,6 +362,8 @@ class LLMClient:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
+            "User-Agent": "GrokOrgOS/2.1.2",
+            "Accept": "application/json",
         }
         payload = {
             "model": self.model,
@@ -315,7 +372,7 @@ class LLMClient:
             "temperature": 0,
         }
         try:
-            with httpx.Client(timeout=30.0) as client:
+            with httpx.Client(timeout=45.0, follow_redirects=True) as client:
                 resp = client.post(url, headers=headers, json=payload)
                 if resp.status_code == 401:
                     return {
@@ -357,13 +414,21 @@ class LLMClient:
                     "base_url": self.base_url,
                     "message": (msg.get("content") or "")[:200],
                 }
+        except httpx.TimeoutException as exc:
+            return {
+                "ok": False,
+                "mode": "live",
+                "model": self.model,
+                "base_url": self.base_url,
+                "error": f"Timeout after 45s testing {url}: {exc}",
+            }
         except httpx.ConnectError as exc:
             return {
                 "ok": False,
                 "mode": "live",
                 "model": self.model,
                 "base_url": self.base_url,
-                "error": f"Connection failed: {exc}. Wrong host or offline.",
+                "error": f"Connection failed: {exc}. Wrong host, offline, or SSL error.",
             }
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "mode": "live", "model": self.model, "base_url": self.base_url, "error": str(exc)}

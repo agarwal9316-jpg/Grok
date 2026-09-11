@@ -862,3 +862,14 @@ dialog::backdrop {
   .compose-row { grid-template-columns: 1fr auto; }
   #model-picker { max-width: 130px; font-size: 0.75rem; }
 }
+
+
+.provider-custom-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+  margin: 0.25rem 0 0.75rem;
+  flex-wrap: wrap;
+}
+.provider-custom-row .grow { flex: 1; min-width: 140px; }
+.provider-custom-row.hidden { display: none; }

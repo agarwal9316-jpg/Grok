@@ -112,16 +112,27 @@
   </div>
 
   <dialog id="settings-dialog">
-    <form method="dialog" id="settings-form" class="settings">
+    <form method="post" id="settings-form" class="settings" action="#">
       <h2>OpenAI / LLM Settings</h2>
-      <p class="muted">Paste an OpenAI-compatible <code>base_url</code> + API key, then <strong>Fetch models</strong>. Works with OpenAI, OpenRouter, Azure, Ollama. Leave key empty for offline mock.</p>
+      <p class="muted">Pick a provider (or Custom), paste an API key, then <strong>Fetch models</strong> / <strong>Test connection</strong>. Leave key empty for offline mock.</p>
+      <label>Provider
+        <select id="cfg-provider" aria-label="LLM provider">
+          <option value="">— loading… —</option>
+        </select>
+      </label>
       <label>OpenAI API Key
         <input id="cfg-key" type="password" placeholder="sk-… (optional)" autocomplete="off" />
       </label>
-      <label>API Base URL
+      <label>API Base URL <span class="muted">(editable)</span>
         <input id="cfg-base" type="url" placeholder="https://api.openai.com/v1" />
       </label>
-      <p class="hint muted">Trailing slash is stripped. If you omit <code>/v1</code>, the server may append it for known hosts.</p>
+      <div class="provider-custom-row hidden" id="cfg-custom-row">
+        <label class="grow">Custom name
+          <input id="cfg-custom-name" type="text" placeholder="My provider" autocomplete="off" />
+        </label>
+        <button type="button" class="btn" id="cfg-add-provider">Add custom provider</button>
+      </div>
+      <p class="hint muted">Trailing slash is stripped. Selecting a provider fills the base URL; you can still edit it.</p>
       <div class="model-fetch-row">
         <label class="grow">Model
           <select id="cfg-model-select">
@@ -136,8 +147,8 @@
       <div class="dialog-actions" style="justify-content:space-between">
         <button type="button" class="btn" id="cfg-test">Test connection</button>
         <div style="display:flex;gap:0.5rem">
-          <button type="submit" value="cancel" class="btn">Cancel</button>
-          <button type="submit" value="save" class="btn btn-primary" id="cfg-save">Save</button>
+          <button type="button" class="btn" id="cfg-cancel" data-action="cancel">Cancel</button>
+          <button type="button" class="btn btn-primary" id="cfg-save" data-action="save">Save</button>
         </div>
       </div>
       <pre id="cfg-test-result" class="test-result hidden"></pre>

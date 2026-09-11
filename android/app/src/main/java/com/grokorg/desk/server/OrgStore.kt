@@ -13,6 +13,9 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.TimeZone
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 /**
  * SQLite-backed store mirroring Python models + bootstrap.
@@ -63,6 +66,9 @@ class OrgStore(context: Context) {
             "api.groq.com/openai",
             "api.together.xyz",
             "api.fireworks.ai/inference",
+            "integrate.api.nvidia.com",
+            "api.deepseek.com",
+            "api.mistral.ai",
         )
         for (h in markers) {
             if (lower.endsWith(h) || lower.contains("://$h")) {
@@ -96,7 +102,7 @@ class OrgStore(context: Context) {
             .put("database_url", "sqlite:///grok_org_os.db")
             .put("host", "127.0.0.1")
             .put("port", LocalBackend.DEFAULT_PORT)
-            .put("version", "2.1.0")
+            .put("version", "2.1.2")
             .put("workspace_dir", "workspace")
     }
 
@@ -550,71 +556,153 @@ class OrgStore(context: Context) {
         db().update("agents", cv, "id=?", arrayOf(agentId.toString()))
     }
 
-    fun testLlmConnection(): JSONObject {
+
+    private val netExecutor = Executors.newCachedThreadPool()
+
+    fun providersJson(): JSONObject {
+        val providers = JSONArray()
+        fun add(id: String, name: String, base: String, editable: Boolean = true, placeholder: Boolean = false) {
+            val o = JSONObject()
+                .put("id", id)
+                .put("name", name)
+                .put("base_url", base)
+                .put("editable", editable)
+            if (placeholder) o.put("placeholder", true)
+            providers.put(o)
+        }
+        add("openai", "OpenAI", "https://api.openai.com/v1")
+        add("openrouter", "OpenRouter", "https://openrouter.ai/api/v1")
+        add("groq", "Groq", "https://api.groq.com/openai/v1")
+        add("nvidia", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1")
+        add("together", "Together", "https://api.together.xyz/v1")
+        add("fireworks", "Fireworks", "https://api.fireworks.ai/inference/v1")
+        add("deepseek", "DeepSeek", "https://api.deepseek.com/v1")
+        add("mistral", "Mistral", "https://api.mistral.ai/v1")
+        add("google", "Google AI Studio (OpenAI compat)", "https://generativelanguage.googleapis.com/v1beta/openai")
+        add("azure", "Azure OpenAI", "https://YOUR_RESOURCE.openai.azure.com/openai/v1", placeholder = true)
+        add("ollama", "Ollama", "http://127.0.0.1:11434/v1")
+        add("lmstudio", "LM Studio", "http://127.0.0.1:1234/v1")
+        add("custom", "Custom", "")
+        return JSONObject().put("ok", true).put("providers", providers).put("count", providers.length())
+    }
+
+    private fun resolveOverrides(overrides: JSONObject?): Triple<String, String, String> {
         loadLlmSettings()
-        if (llm.useMock) {
-            return JSONObject().put("ok", true).put("mode", "mock").put("model", llm.model)
+        var apiKey = llm.apiKey
+        var baseUrl = llm.baseUrl
+        var model = llm.model
+        if (overrides != null) {
+            if (overrides.has("openai_api_key") && !overrides.isNull("openai_api_key")) {
+                val k = overrides.optString("openai_api_key", "").trim()
+                if (k.isNotEmpty()) apiKey = k
+            }
+            if (overrides.has("openai_base_url") && !overrides.isNull("openai_base_url")) {
+                val b = overrides.optString("openai_base_url", "").trim()
+                if (b.isNotEmpty()) baseUrl = normalizeBaseUrl(b)
+            }
+            if (overrides.has("openai_model") && !overrides.isNull("openai_model")) {
+                val m = overrides.optString("openai_model", "").trim()
+                if (m.isNotEmpty()) model = m
+            }
+        }
+        return Triple(apiKey, baseUrl, model)
+    }
+
+    private fun looksChatCapable(id: String): Boolean {
+        val mid = id.lowercase()
+        val skip = listOf(
+            "embed", "embedding", "rerank", "tts", "whisper", "transcri",
+            "moderation", "dall-e", "stable-diffusion", "flux", "image", "video", "codec", "retrieve",
+        )
+        return skip.none { mid.contains(it) }
+    }
+
+    private fun <T> runNet(timeoutSec: Long = 45, block: () -> T): T {
+        val fut = netExecutor.submit(block)
+        return try {
+            fut.get(timeoutSec, TimeUnit.SECONDS)
+        } catch (e: TimeoutException) {
+            fut.cancel(true)
+            throw e
+        }
+    }
+
+    fun testLlmConnection(overrides: JSONObject? = null): JSONObject {
+        val (apiKey, baseUrlRaw, model) = resolveOverrides(overrides)
+        if (apiKey.isBlank()) {
+            return JSONObject().put("ok", true).put("mode", "mock").put("model", model)
                 .put("message", "Mock LLM ready")
         }
         return try {
-            val base = normalizeBaseUrl(llm.baseUrl)
-            llm.baseUrl = base
-            val url = URL("${base.trimEnd('/')}/chat/completions")
-            val payload = JSONObject().apply {
-                put("model", llm.model)
-                put("temperature", 0)
-                put("max_tokens", 16)
-                put("messages", JSONArray().put(
-                    JSONObject().put("role", "user").put("content", "Reply with exactly: pong")
-                ))
-            }
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = 30_000
-                readTimeout = 30_000
-                doOutput = true
-                setRequestProperty("Authorization", "Bearer ${llm.apiKey}")
-                setRequestProperty("Content-Type", "application/json")
-            }
-            conn.outputStream.bufferedWriter().use { it.write(payload.toString()) }
-            val code = conn.responseCode
-            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val textBody = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-            when {
-                code == 401 -> JSONObject()
-                    .put("ok", false).put("mode", "live").put("model", llm.model)
-                    .put("base_url", base)
-                    .put("error", "401 Unauthorized — API key rejected. Check key and provider.")
-                    .put("status_code", 401)
-                code == 404 -> JSONObject()
-                    .put("ok", false).put("mode", "live").put("model", llm.model)
-                    .put("base_url", base)
-                    .put("error", "404 Not Found at $url. Check base URL (often needs /v1; no trailing slash).")
-                    .put("status_code", 404)
-                code !in 200..299 -> JSONObject()
-                    .put("ok", false).put("mode", "live").put("model", llm.model)
-                    .put("base_url", base)
-                    .put("error", "HTTP $code: ${textBody.take(400)}")
-                    .put("status_code", code)
-                else -> {
-                    val msg = JSONObject(textBody)
-                        .getJSONArray("choices").getJSONObject(0)
-                        .getJSONObject("message").optString("content", "")
-                    JSONObject().put("ok", true).put("mode", "live").put("model", llm.model)
-                        .put("base_url", base).put("message", msg.take(200))
+            runNet(45) {
+                val base = normalizeBaseUrl(baseUrlRaw)
+                val url = URL("${base.trimEnd('/')}/chat/completions")
+                val payload = JSONObject().apply {
+                    put("model", model)
+                    put("temperature", 0)
+                    put("max_tokens", 16)
+                    put("messages", JSONArray().put(
+                        JSONObject().put("role", "user").put("content", "Reply with exactly: pong")
+                    ))
+                }
+                val conn = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 45_000
+                    readTimeout = 45_000
+                    instanceFollowRedirects = true
+                    doOutput = true
+                    setRequestProperty("Authorization", "Bearer $apiKey")
+                    setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("User-Agent", "GrokOrgOS/2.1.2")
+                    setRequestProperty("Accept", "application/json")
+                }
+                try {
+                    conn.outputStream.bufferedWriter().use { it.write(payload.toString()) }
+                    val code = conn.responseCode
+                    val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                    val textBody = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                    when {
+                        code == 401 -> JSONObject()
+                            .put("ok", false).put("mode", "live").put("model", model)
+                            .put("base_url", base)
+                            .put("error", "401 Unauthorized — API key rejected. Check key and provider.")
+                            .put("status_code", 401)
+                        code == 404 -> JSONObject()
+                            .put("ok", false).put("mode", "live").put("model", model)
+                            .put("base_url", base)
+                            .put("error", "404 Not Found at $url. Check base URL (often needs /v1; no trailing slash).")
+                            .put("status_code", 404)
+                        code !in 200..299 -> JSONObject()
+                            .put("ok", false).put("mode", "live").put("model", model)
+                            .put("base_url", base)
+                            .put("error", "HTTP $code: ${textBody.take(400)}")
+                            .put("status_code", code)
+                        else -> {
+                            val msg = JSONObject(textBody)
+                                .getJSONArray("choices").getJSONObject(0)
+                                .getJSONObject("message").optString("content", "")
+                            JSONObject().put("ok", true).put("mode", "live").put("model", model)
+                                .put("base_url", base).put("message", msg.take(200))
+                        }
+                    }
+                } finally {
+                    conn.disconnect()
                 }
             }
+        } catch (e: TimeoutException) {
+            JSONObject().put("ok", false).put("mode", "live").put("model", model)
+                .put("base_url", baseUrlRaw)
+                .put("error", "Timeout after 45s testing connection")
         } catch (e: Exception) {
-            JSONObject().put("ok", false).put("mode", "live").put("model", llm.model)
-                .put("base_url", llm.baseUrl)
+            JSONObject().put("ok", false).put("mode", "live").put("model", model)
+                .put("base_url", baseUrlRaw)
                 .put("error", "Connection failed: ${e.message ?: "error"}")
         }
     }
 
-
-    fun listModels(): JSONObject {
-        loadLlmSettings()
-        if (llm.useMock) {
+    fun listModels(overrides: JSONObject? = null): JSONObject {
+        val (apiKey, baseUrlRaw, _) = resolveOverrides(overrides)
+        if (apiKey.isBlank()) {
             val models = JSONArray()
             listOf(
                 "gpt-4o-mini" to "openai",
@@ -629,71 +717,84 @@ class OrgStore(context: Context) {
             return JSONObject()
                 .put("ok", true)
                 .put("mode", "mock")
-                .put("base_url", llm.baseUrl)
+                .put("base_url", normalizeBaseUrl(baseUrlRaw))
                 .put("note", "No API key set — showing curated mock models. Add a key to fetch from the provider.")
                 .put("models", models)
                 .put("data", models)
         }
         return try {
-            val base = normalizeBaseUrl(llm.baseUrl)
-            llm.baseUrl = base
-            val url = URL("${base.trimEnd('/')}/models")
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 30_000
-                readTimeout = 30_000
-                setRequestProperty("Authorization", "Bearer ${llm.apiKey}")
-            }
-            val code = conn.responseCode
-            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val textBody = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (code == 401) {
-                return JSONObject()
-                    .put("ok", false).put("mode", "live").put("base_url", base)
-                    .put("error", "401 Unauthorized — check API key")
-                    .put("status_code", 401)
-                    .put("models", JSONArray()).put("data", JSONArray())
-            }
-            if (code == 404) {
-                return JSONObject()
-                    .put("ok", false).put("mode", "live").put("base_url", base)
-                    .put("error", "404 Not Found at $url. Check base URL (try with /v1; trailing slash is stripped).")
-                    .put("status_code", 404)
-                    .put("models", JSONArray()).put("data", JSONArray())
-            }
-            if (code !in 200..299) {
-                return JSONObject()
-                    .put("ok", false).put("mode", "live").put("base_url", base)
-                    .put("error", "HTTP $code: ${textBody.take(300)}")
-                    .put("status_code", code)
-                    .put("models", JSONArray()).put("data", JSONArray())
-            }
-            val payload = JSONObject(textBody)
-            val raw = payload.optJSONArray("data") ?: JSONArray()
-            val sorted = mutableListOf<JSONObject>()
-            for (i in 0 until raw.length()) {
-                val item = raw.opt(i)
-                when (item) {
-                    is JSONObject -> {
-                        val id = item.optString("id", "")
-                        if (id.isNotBlank()) {
-                            sorted += JSONObject()
-                                .put("id", id)
-                                .put("owned_by", item.optString("owned_by", item.optString("ownedBy", "")))
+            runNet(45) {
+                val base = normalizeBaseUrl(baseUrlRaw)
+                val url = URL("${base.trimEnd('/')}/models")
+                val conn = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 45_000
+                    readTimeout = 45_000
+                    instanceFollowRedirects = true
+                    setRequestProperty("Authorization", "Bearer $apiKey")
+                    setRequestProperty("User-Agent", "GrokOrgOS/2.1.2")
+                    setRequestProperty("Accept", "application/json")
+                }
+                try {
+                    val code = conn.responseCode
+                    val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                    val textBody = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                    if (code == 401) {
+                        return@runNet JSONObject()
+                            .put("ok", false).put("mode", "live").put("base_url", base)
+                            .put("error", "401 Unauthorized — check API key")
+                            .put("status_code", 401)
+                            .put("models", JSONArray()).put("data", JSONArray())
+                    }
+                    if (code == 404) {
+                        return@runNet JSONObject()
+                            .put("ok", false).put("mode", "live").put("base_url", base)
+                            .put("error", "404 Not Found at $url. Check base URL (try with /v1; trailing slash is stripped).")
+                            .put("status_code", 404)
+                            .put("models", JSONArray()).put("data", JSONArray())
+                    }
+                    if (code !in 200..299) {
+                        return@runNet JSONObject()
+                            .put("ok", false).put("mode", "live").put("base_url", base)
+                            .put("error", "HTTP $code: ${textBody.take(300)}")
+                            .put("status_code", code)
+                            .put("models", JSONArray()).put("data", JSONArray())
+                    }
+                    val payload = JSONObject(textBody)
+                    val raw = payload.optJSONArray("data") ?: JSONArray()
+                    val sorted = mutableListOf<JSONObject>()
+                    for (i in 0 until raw.length()) {
+                        val item = raw.opt(i)
+                        when (item) {
+                            is JSONObject -> {
+                                val id = item.optString("id", "")
+                                if (id.isNotBlank()) {
+                                    sorted += JSONObject()
+                                        .put("id", id)
+                                        .put("owned_by", item.optString("owned_by", item.optString("ownedBy", "")))
+                                }
+                            }
+                            is String -> sorted += JSONObject().put("id", item).put("owned_by", "")
                         }
                     }
-                    is String -> sorted += JSONObject().put("id", item).put("owned_by", "")
+                    sorted.sortWith(compareBy({ if (looksChatCapable(it.getString("id"))) 0 else 1 }, { it.getString("id").lowercase() }))
+                    val out = JSONArray()
+                    sorted.forEach { out.put(it) }
+                    JSONObject()
+                        .put("ok", true).put("mode", "live").put("base_url", base)
+                        .put("models", out).put("data", out).put("count", out.length())
+                } finally {
+                    conn.disconnect()
                 }
             }
-            sorted.sortBy { it.getString("id").lowercase() }
-            val out = JSONArray()
-            sorted.forEach { out.put(it) }
+        } catch (e: TimeoutException) {
             JSONObject()
-                .put("ok", true).put("mode", "live").put("base_url", base)
-                .put("models", out).put("data", out).put("count", out.length())
+                .put("ok", false).put("mode", "live").put("base_url", baseUrlRaw)
+                .put("error", "Timeout after 45s fetching models")
+                .put("models", JSONArray()).put("data", JSONArray())
         } catch (e: Exception) {
             JSONObject()
-                .put("ok", false).put("mode", "live").put("base_url", llm.baseUrl)
+                .put("ok", false).put("mode", "live").put("base_url", baseUrlRaw)
                 .put("error", e.message ?: "error")
                 .put("models", JSONArray()).put("data", JSONArray())
         }

@@ -31,7 +31,7 @@ class LocalHttpServer(
 
             when {
                 uri == "/health" && method == Method.GET ->
-                    json(JSONObject().put("status", "ok").put("version", "2.1.0"))
+                    json(JSONObject().put("status", "ok").put("version", "2.1.2"))
 
                 uri == "/" && method == Method.GET ->
                     asset("www/index.html", "text/html")
@@ -257,14 +257,43 @@ class LocalHttpServer(
 
 
 
-        // ---- models ----
-        if (p == "/models" && (method == Method.GET || method == Method.POST)) {
-            return json(store.listModels())
+        // ---- providers catalog ----
+        if (p == "/providers" && method == Method.GET) {
+            return json(store.providersJson())
         }
 
-        // ---- settings test ----
+        // ---- models (accept JSON body overrides for key/base) ----
+        if (p == "/models" && (method == Method.GET || method == Method.POST)) {
+            val overrides = if (jsonBody.length() > 0) jsonBody else null
+            return try {
+                json(store.listModels(overrides))
+            } catch (e: Exception) {
+                Log.e(TAG, "listModels failed", e)
+                json(
+                    JSONObject()
+                        .put("ok", false)
+                        .put("mode", "live")
+                        .put("error", e.message ?: "listModels failed")
+                        .put("models", org.json.JSONArray())
+                        .put("data", org.json.JSONArray())
+                )
+            }
+        }
+
+        // ---- settings test (accept body overrides) ----
         if ((p == "/settings/test" || p == "/config/test") && method == Method.POST) {
-            return json(store.testLlmConnection())
+            val overrides = if (jsonBody.length() > 0) jsonBody else null
+            return try {
+                json(store.testLlmConnection(overrides))
+            } catch (e: Exception) {
+                Log.e(TAG, "testLlmConnection failed", e)
+                json(
+                    JSONObject()
+                        .put("ok", false)
+                        .put("mode", "live")
+                        .put("error", e.message ?: "test failed")
+                )
+            }
         }
 
         // ---- agents status ----

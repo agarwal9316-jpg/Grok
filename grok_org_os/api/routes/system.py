@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,7 @@ from grok_org_os.api.deps import get_db
 from grok_org_os.bootstrap import bootstrap_sample_org
 from grok_org_os.config import get_settings, reset_settings_cache
 from grok_org_os.llm import LLMClient, normalize_base_url, set_llm_client
+from grok_org_os.providers import list_providers
 from grok_org_os.models import Message, Task, TaskStatus
 from grok_org_os.schemas import (
     AgentRead,
@@ -35,7 +36,7 @@ class ConfigRead(BaseModel):
     database_url: str
     host: str
     port: int
-    version: str = "2.1.0"
+    version: str = "2.1.2"
     workspace_dir: str = "workspace"
 
 
@@ -49,6 +50,14 @@ class SettingsUpdate(BaseModel):
     smtp_password: Optional[str] = None
     smtp_from: Optional[str] = None
     webhook_url: Optional[str] = None
+
+
+class LlmOverrideBody(BaseModel):
+    """Optional form-value overrides so fetch/test work before Save."""
+
+    openai_api_key: Optional[str] = None
+    openai_base_url: Optional[str] = None
+    openai_model: Optional[str] = None
 
 
 class BootstrapRequest(BaseModel):
@@ -182,18 +191,79 @@ def update_app_settings(payload: SettingsUpdate) -> ConfigRead:
 
 
 
+def _client_from_overrides(payload: LlmOverrideBody | None = None) -> LLMClient:
+    """Build LLMClient using optional JSON body overrides (form values)."""
+    settings = get_settings()
+    key = settings.openai_api_key
+    base = settings.openai_base_url
+    model = settings.openai_model
+    if payload is not None:
+        if payload.openai_api_key is not None and str(payload.openai_api_key).strip():
+            key = str(payload.openai_api_key).strip()
+        if payload.openai_base_url is not None and str(payload.openai_base_url).strip():
+            base = normalize_base_url(str(payload.openai_base_url).strip())
+        if payload.openai_model is not None and str(payload.openai_model).strip():
+            model = str(payload.openai_model).strip()
+    return LLMClient(api_key=key or "", base_url=base, model=model)
+
+
+async def _parse_override_body(request: Request) -> LlmOverrideBody | None:
+    """Accept JSON body overrides on GET or POST (empty/missing body → None)."""
+    ctype = (request.headers.get("content-type") or "").lower()
+    if "application/json" not in ctype and request.method == "GET":
+        # Allow query params as a convenience for GET
+        qp = request.query_params
+        if not any(k in qp for k in ("openai_api_key", "openai_base_url", "openai_model")):
+            return None
+        return LlmOverrideBody(
+            openai_api_key=qp.get("openai_api_key"),
+            openai_base_url=qp.get("openai_base_url"),
+            openai_model=qp.get("openai_model"),
+        )
+    try:
+        raw = await request.body()
+        if not raw or not raw.strip():
+            return None
+        import json
+
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return None
+        return LlmOverrideBody(
+            openai_api_key=data.get("openai_api_key"),
+            openai_base_url=data.get("openai_base_url"),
+            openai_model=data.get("openai_model"),
+        )
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@router.get("/providers")
+def get_providers() -> dict:
+    """Built-in provider catalog (base URLs) shared by PC + Android."""
+    return list_providers()
+
+
 @router.get("/models")
+async def list_provider_models_get(request: Request) -> dict:
+    """List models (GET). Accepts optional JSON/query overrides."""
+    payload = await _parse_override_body(request)
+    return _client_from_overrides(payload).list_models()
+
+
 @router.post("/models")
-def list_provider_models() -> dict:
-    """List models from {openai_base_url}/models (Bearer key) or curated mock list."""
-    client = LLMClient()
-    return client.list_models()
+async def list_provider_models_post(request: Request) -> dict:
+    """List models (POST). JSON body overrides: openai_api_key, openai_base_url."""
+    payload = await _parse_override_body(request)
+    return _client_from_overrides(payload).list_models()
 
 
 @router.post("/settings/test")
 @router.post("/config/test")
-def test_llm_connection() -> dict:
-    client = LLMClient()
+async def test_llm_connection(request: Request) -> dict:
+    """Ping chat/completions. Accepts JSON body overrides for key/base/model."""
+    payload = await _parse_override_body(request)
+    client = _client_from_overrides(payload)
     return client.test_connection()
 
 

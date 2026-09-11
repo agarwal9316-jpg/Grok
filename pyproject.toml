@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "grok-org-os"
-version = "2.1.0"
+version = "2.1.2"
 description = "Portable multi-agent AI organization platform with full-power OpenAI tools"
 readme = "README.md"
 license = { text = "MIT" }
