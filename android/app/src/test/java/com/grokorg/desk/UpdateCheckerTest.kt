@@ -4,6 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -69,6 +70,72 @@ class UpdateCheckerTest {
         val assets = JSONArray()
             .put(asset("GrokOrgOS-2.1.1.apk", "https://ex/plain.apk"))
         assertEquals("https://ex/plain.apk", UpdateChecker.pickBestApkUrl(assets))
+    }
+
+    @Test
+    fun httpErrorMessage_maps403And429ToRateLimit() {
+        assertEquals(UpdateChecker.RATE_LIMIT_MESSAGE, UpdateChecker.httpErrorMessage(403))
+        assertEquals(UpdateChecker.RATE_LIMIT_MESSAGE, UpdateChecker.httpErrorMessage(429))
+        assertTrue(UpdateChecker.httpErrorMessage(403).contains("rate limit", ignoreCase = true))
+        assertEquals("GitHub API HTTP 500", UpdateChecker.httpErrorMessage(500))
+        assertEquals("GitHub API HTTP 404", UpdateChecker.httpErrorMessage(404))
+    }
+
+    @Test
+    fun shouldTryFallback_onRateLimitAndNetwork() {
+        assertTrue(UpdateChecker.shouldTryFallback(Exception(UpdateChecker.RATE_LIMIT_MESSAGE)))
+        assertTrue(UpdateChecker.shouldTryFallback(Exception("GitHub API HTTP 403")))
+        assertTrue(UpdateChecker.shouldTryFallback(Exception("GitHub API HTTP 429")))
+        assertTrue(UpdateChecker.shouldTryFallback(Exception("Connection reset")))
+        assertTrue(UpdateChecker.shouldTryFallback(java.net.UnknownHostException("api.github.com")))
+        assertFalse(UpdateChecker.shouldTryFallback(Exception("GitHub API HTTP 404")))
+        assertFalse(UpdateChecker.shouldTryFallback(Exception("GitHub API HTTP 500")))
+        assertFalse(UpdateChecker.shouldTryFallback(null))
+    }
+
+    @Test
+    fun parseFallbackReleaseJson_readsDebugApkUrl() {
+        val json = """
+            {
+              "tag":"v2.1.3",
+              "versionName":"2.1.3",
+              "versionCode":8,
+              "apkUrl":"https://github.com/agarwal9316-jpg/Grok/releases/download/v2.1.3/GrokOrgOS-2.1.3-debug.apk",
+              "htmlUrl":"https://github.com/agarwal9316-jpg/Grok/releases/tag/v2.1.3"
+            }
+        """.trimIndent()
+        val info = UpdateChecker.parseFallbackReleaseJson(json)
+        assertEquals("v2.1.3", info.tagName)
+        assertEquals("2.1.3", info.name)
+        assertEquals(
+            "https://github.com/agarwal9316-jpg/Grok/releases/download/v2.1.3/GrokOrgOS-2.1.3-debug.apk",
+            info.apkUrl
+        )
+        assertEquals(
+            "https://github.com/agarwal9316-jpg/Grok/releases/tag/v2.1.3",
+            info.htmlUrl
+        )
+        assertTrue(UpdateChecker.isNewer(info.tagName, "2.1.2"))
+    }
+
+    @Test
+    fun parseApiReleaseJson_picksDebugAsset() {
+        val json = JSONObject()
+            .put("tag_name", "v2.1.3")
+            .put("name", "Grok Org OS v2.1.3")
+            .put("body", "notes")
+            .put("html_url", "https://github.com/agarwal9316-jpg/Grok/releases/tag/v2.1.3")
+            .put(
+                "assets",
+                JSONArray()
+                    .put(asset("GrokOrgOS-2.1.3-release-unsigned.apk", "https://ex/unsigned.apk"))
+                    .put(asset("GrokOrgOS-2.1.3-debug.apk", "https://ex/debug.apk"))
+            )
+            .toString()
+        val info = UpdateChecker.parseApiReleaseJson(json)
+        assertEquals("v2.1.3", info.tagName)
+        assertEquals("https://ex/debug.apk", info.apkUrl)
+        assertNotNull(info.apkUrl)
     }
 
     private fun asset(name: String, url: String): JSONObject =

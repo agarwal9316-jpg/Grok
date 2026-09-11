@@ -1,4 +1,4 @@
-# Grok Org OS Android 2.1.1
+# Grok Org OS Android 2.1.3
 
 Fully **standalone** APK: on-device NanoHTTPD backend + desk WebView UI.
 
@@ -14,7 +14,13 @@ Fully **standalone** APK: on-device NanoHTTPD backend + desk WebView UI.
 
 ```bash
 ./build-apk.sh
-# → dist/GrokOrgOS-2.1.1-debug.apk
+# → dist/GrokOrgOS-2.1.3-debug.apk
 ```
 
 Requires Android SDK + JDK 17+.
+
+## Update check fallback
+
+If the GitHub Releases API is rate-limited (HTTP 403/429), the app falls back to
+[`android/latest-release.json`](latest-release.json) on `main` (raw.githubusercontent.com).
+Keep that file updated on every release.

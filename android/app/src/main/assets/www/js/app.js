@@ -1,4 +1,4 @@
-/* Grok Org OS 2.1.2 — providers + robust model fetch/test */
+/* Grok Org OS 2.1.3 — providers + robust model fetch/test */
 (() => {
   const state = {
     org: null,

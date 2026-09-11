@@ -123,11 +123,10 @@ class MainActivity : AppCompatActivity() {
                 },
                 onFailure = { e ->
                     if (manual) {
-                        Toast.makeText(
+                        UpdateChecker.showCheckFailedDialog(
                             this@MainActivity,
-                            "Update check failed: ${e.message}",
-                            Toast.LENGTH_LONG
-                        ).show()
+                            e.message ?: getString(R.string.update_check_failed_generic)
+                        )
                     }
                 }
             )

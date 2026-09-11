@@ -36,7 +36,7 @@ class ConfigRead(BaseModel):
     database_url: str
     host: str
     port: int
-    version: str = "2.1.2"
+    version: str = "2.1.3"
     workspace_dir: str = "workspace"
 
 
