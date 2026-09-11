@@ -54,9 +54,13 @@ CLI extras:
 ```bash
 grok-org bootstrap          # sample org
 grok-org run-demo           # end-to-end collaboration (mock LLM ok)
-grok-org serve              # API + GUI
+grok-org serve              # API + GUI (opens browser)
+grok-org desktop            # optional native window (pip install -e ".[desktop]")
 pytest -q
 ```
+
+Portable launchers at repo root: `Start.bat` / `Start.ps1` / `Stop.bat` (Windows) and `start.sh` (Mac/Linux). Copy the folder anywhere — it is the app.
+
 
 ## Docker (optional)
 
