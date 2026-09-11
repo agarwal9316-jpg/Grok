@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "grok-org-os"
-version = "2.1.4"
+version = "2.1.5"
 description = "N.E.H.A — portable multi-agent AI organization platform with full-power OpenAI tools"
 readme = "README.md"
 license = { text = "MIT" }

@@ -97,22 +97,22 @@ class UpdateCheckerTest {
     fun parseFallbackReleaseJson_readsDebugApkUrl() {
         val json = """
             {
-              "tag":"v2.1.4",
-              "versionName":"2.1.4",
-              "versionCode":9,
-              "apkUrl":"https://github.com/agarwal9316-jpg/Grok/releases/download/v2.1.4/NEHA-2.1.4-debug.apk",
-              "htmlUrl":"https://github.com/agarwal9316-jpg/Grok/releases/tag/v2.1.4"
+              "tag":"v2.1.5",
+              "versionName":"2.1.5",
+              "versionCode":10,
+              "apkUrl":"https://github.com/agarwal9316-jpg/Grok/releases/download/v2.1.5/NEHA-2.1.5-debug.apk",
+              "htmlUrl":"https://github.com/agarwal9316-jpg/Grok/releases/tag/v2.1.5"
             }
         """.trimIndent()
         val info = UpdateChecker.parseFallbackReleaseJson(json)
-        assertEquals("v2.1.4", info.tagName)
-        assertEquals("2.1.4", info.name)
+        assertEquals("v2.1.5", info.tagName)
+        assertEquals("2.1.5", info.name)
         assertEquals(
-            "https://github.com/agarwal9316-jpg/Grok/releases/download/v2.1.4/NEHA-2.1.4-debug.apk",
+            "https://github.com/agarwal9316-jpg/Grok/releases/download/v2.1.5/NEHA-2.1.5-debug.apk",
             info.apkUrl
         )
         assertEquals(
-            "https://github.com/agarwal9316-jpg/Grok/releases/tag/v2.1.4",
+            "https://github.com/agarwal9316-jpg/Grok/releases/tag/v2.1.5",
             info.htmlUrl
         )
         assertTrue(UpdateChecker.isNewer(info.tagName, "2.1.2"))
@@ -121,19 +121,19 @@ class UpdateCheckerTest {
     @Test
     fun parseApiReleaseJson_picksDebugAsset() {
         val json = JSONObject()
-            .put("tag_name", "v2.1.4")
-            .put("name", "N.E.H.A v2.1.4")
+            .put("tag_name", "v2.1.5")
+            .put("name", "N.E.H.A v2.1.5")
             .put("body", "notes")
-            .put("html_url", "https://github.com/agarwal9316-jpg/Grok/releases/tag/v2.1.4")
+            .put("html_url", "https://github.com/agarwal9316-jpg/Grok/releases/tag/v2.1.5")
             .put(
                 "assets",
                 JSONArray()
-                    .put(asset("NEHA-2.1.4-release-unsigned.apk", "https://ex/unsigned.apk"))
-                    .put(asset("NEHA-2.1.4-debug.apk", "https://ex/debug.apk"))
+                    .put(asset("NEHA-2.1.5-release-unsigned.apk", "https://ex/unsigned.apk"))
+                    .put(asset("NEHA-2.1.5-debug.apk", "https://ex/debug.apk"))
             )
             .toString()
         val info = UpdateChecker.parseApiReleaseJson(json)
-        assertEquals("v2.1.4", info.tagName)
+        assertEquals("v2.1.5", info.tagName)
         assertEquals("https://ex/debug.apk", info.apkUrl)
         assertNotNull(info.apkUrl)
     }

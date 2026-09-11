@@ -102,13 +102,18 @@ class OrgStore(context: Context) {
             .put("database_url", "sqlite:///grok_org_os.db")
             .put("host", "127.0.0.1")
             .put("port", LocalBackend.DEFAULT_PORT)
-            .put("version", "2.1.4")
+            .put("version", "2.1.5")
             .put("workspace_dir", "workspace")
     }
 
     fun updateSettings(body: JSONObject): JSONObject {
         if (body.has("openai_api_key") && !body.isNull("openai_api_key")) {
-            setSetting("openai_api_key", body.getString("openai_api_key"))
+            val raw = body.getString("openai_api_key")
+            val trimmed = trimApiKey(raw)
+            if (raw.isNotEmpty() && trimmed.isEmpty()) {
+                throw IllegalArgumentException("API key is empty after trim — remove spaces/newlines and paste again.")
+            }
+            setSetting("openai_api_key", trimmed)
         }
         if (body.has("openai_base_url") && !body.isNull("openai_base_url")) {
             val v = normalizeBaseUrl(body.getString("openai_base_url"))
@@ -586,15 +591,89 @@ class OrgStore(context: Context) {
         return JSONObject().put("ok", true).put("providers", providers).put("count", providers.length())
     }
 
+
+    fun trimApiKey(key: String?): String {
+        if (key == null) return ""
+        var k = key.replace("\uFEFF", "").replace("\u200B", "")
+        k = k.replace("\r", "").replace("\n", "").replace("\t", "")
+        return k.trim()
+    }
+
+    fun isNvidiaHost(url: String?): Boolean {
+        return (url ?: "").lowercase().contains("nvidia.com")
+    }
+
+    fun looksOpenAiModel(model: String?): Boolean {
+        val m = (model ?: "").trim().lowercase()
+        if (m.isEmpty()) return false
+        if (m.startsWith("gpt-")) return true
+        if (m.startsWith("o1") || m.startsWith("o3")) return true
+        return false
+    }
+
+    fun resolveNvidiaTestModel(baseUrl: String, model: String, fetchedIds: List<String>? = null): String {
+        if (!isNvidiaHost(baseUrl)) return model
+        if (!looksOpenAiModel(model)) return model
+        fetchedIds?.firstOrNull { it.isNotBlank() && !looksOpenAiModel(it) }?.let { return it }
+        if (!fetchedIds.isNullOrEmpty()) return fetchedIds[0]
+        return "meta/llama-3.1-8b-instruct"
+    }
+
+    fun formatLlmHttpError(statusCode: Int, baseUrl: String, model: String, body: String, url: String? = null): String {
+        var snippet = body.trim().replace("\n", " ")
+        if (snippet.length > 400) snippet = snippet.take(400) + "…"
+        val lower = snippet.lowercase()
+        val nvidia = isNvidiaHost(baseUrl)
+        if (nvidia && (statusCode == 401 || statusCode == 403)) {
+            return (
+                "$statusCode from NVIDIA chat/completions — your key may list models " +
+                "(GET /v1/models often returns 200) while chat is denied until " +
+                "\"Public API Endpoints\" is enabled on the NGC/org. " +
+                "Open https://build.nvidia.com (or ask NVIDIA support) to enable " +
+                "Public API Endpoints, then retry. " +
+                "Verify with curl against ${baseUrl.trimEnd('/')}/chat/completions " +
+                "(Authorization: Bearer KEY, model=$model). " +
+                "Body: ${if (snippet.isEmpty()) "(empty)" else snippet}"
+            )
+        }
+        val modelHint = lower.contains("model") || lower.contains("not found") ||
+            lower.contains("does not exist") || lower.contains("unknown") || looksOpenAiModel(model)
+        if (nvidia && (statusCode == 400 || statusCode == 404) && modelHint) {
+            return (
+                "HTTP $statusCode: pick a NVIDIA model from Fetch models " +
+                "(not gpt-4o-mini / OpenAI ids). Current model='$model'. " +
+                "Body: ${if (snippet.isEmpty()) "(empty)" else snippet}"
+            )
+        }
+        if (statusCode == 401) {
+            val baseMsg = "401 Unauthorized — API key rejected. Check key and provider."
+            return if (snippet.isNotEmpty()) "$baseMsg Body: $snippet" else baseMsg
+        }
+        if (statusCode == 404) {
+            val where = url ?: "${baseUrl.trimEnd('/')}/…"
+            return (
+                "404 Not Found at $where. " +
+                "Normalize base URL (no trailing slash; often needs /v1). " +
+                "Body: ${if (snippet.isEmpty()) "(empty)" else snippet}"
+            )
+        }
+        return "HTTP $statusCode: ${if (snippet.isEmpty()) "(empty body)" else snippet}"
+    }
+
     private fun resolveOverrides(overrides: JSONObject?): Triple<String, String, String> {
         loadLlmSettings()
-        var apiKey = llm.apiKey
+        var apiKey = trimApiKey(llm.apiKey)
         var baseUrl = llm.baseUrl
         var model = llm.model
         if (overrides != null) {
             if (overrides.has("openai_api_key") && !overrides.isNull("openai_api_key")) {
-                val k = overrides.optString("openai_api_key", "").trim()
-                if (k.isNotEmpty()) apiKey = k
+                val raw = overrides.optString("openai_api_key", "")
+                val k = trimApiKey(raw)
+                if (raw.isNotEmpty() && k.isEmpty()) {
+                    apiKey = ""
+                } else if (k.isNotEmpty()) {
+                    apiKey = k
+                }
             }
             if (overrides.has("openai_base_url") && !overrides.isNull("openai_base_url")) {
                 val b = overrides.optString("openai_base_url", "").trim()
@@ -628,17 +707,28 @@ class OrgStore(context: Context) {
     }
 
     fun testLlmConnection(overrides: JSONObject? = null): JSONObject {
-        val (apiKey, baseUrlRaw, model) = resolveOverrides(overrides)
+        val (apiKeyRaw, baseUrlRaw, modelRaw) = resolveOverrides(overrides)
+        val apiKey = trimApiKey(apiKeyRaw)
         if (apiKey.isBlank()) {
-            return JSONObject().put("ok", true).put("mode", "mock").put("model", model)
+            // Distinguish mock (no key configured) vs whitespace-only paste
+            val hadOverrideKey = overrides != null && overrides.has("openai_api_key") &&
+                !overrides.isNull("openai_api_key") &&
+                overrides.optString("openai_api_key", "").isNotEmpty()
+            if (hadOverrideKey || (llm.apiKey.isNotEmpty() && trimApiKey(llm.apiKey).isEmpty())) {
+                return JSONObject().put("ok", false).put("mode", "live").put("model", modelRaw)
+                    .put("base_url", baseUrlRaw)
+                    .put("error", "API key is empty after trim — paste the key again (no spaces/newlines).")
+            }
+            return JSONObject().put("ok", true).put("mode", "mock").put("model", modelRaw)
                 .put("message", "Mock LLM ready")
         }
         return try {
             runNet(45) {
                 val base = normalizeBaseUrl(baseUrlRaw)
+                val testModel = resolveNvidiaTestModel(base, modelRaw)
                 val url = URL("${base.trimEnd('/')}/chat/completions")
                 val payload = JSONObject().apply {
-                    put("model", model)
+                    put("model", testModel)
                     put("temperature", 0)
                     put("max_tokens", 16)
                     put("messages", JSONArray().put(
@@ -653,7 +743,7 @@ class OrgStore(context: Context) {
                     doOutput = true
                     setRequestProperty("Authorization", "Bearer $apiKey")
                     setRequestProperty("Content-Type", "application/json")
-                    setRequestProperty("User-Agent", "NEHA/2.1.4")
+                    setRequestProperty("User-Agent", "NEHA/2.1.5")
                     setRequestProperty("Accept", "application/json")
                 }
                 try {
@@ -662,27 +752,31 @@ class OrgStore(context: Context) {
                     val stream = if (code in 200..299) conn.inputStream else conn.errorStream
                     val textBody = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
                     when {
-                        code == 401 -> JSONObject()
-                            .put("ok", false).put("mode", "live").put("model", model)
-                            .put("base_url", base)
-                            .put("error", "401 Unauthorized — API key rejected. Check key and provider.")
-                            .put("status_code", 401)
-                        code == 404 -> JSONObject()
-                            .put("ok", false).put("mode", "live").put("model", model)
-                            .put("base_url", base)
-                            .put("error", "404 Not Found at $url. Check base URL (often needs /v1; no trailing slash).")
-                            .put("status_code", 404)
-                        code !in 200..299 -> JSONObject()
-                            .put("ok", false).put("mode", "live").put("model", model)
-                            .put("base_url", base)
-                            .put("error", "HTTP $code: ${textBody.take(400)}")
-                            .put("status_code", code)
+                        code !in 200..299 -> {
+                            val err = formatLlmHttpError(code, base, testModel, textBody, url.toString())
+                            val o = JSONObject()
+                                .put("ok", false).put("mode", "live").put("model", testModel)
+                                .put("base_url", base)
+                                .put("error", err)
+                                .put("status_code", code)
+                                .put("body", textBody.take(400))
+                            if (testModel != modelRaw) {
+                                o.put("requested_model", modelRaw)
+                                o.put("note", "Used test model '$testModel' instead of '$modelRaw' (OpenAI-style id on NVIDIA).")
+                            }
+                            o
+                        }
                         else -> {
                             val msg = JSONObject(textBody)
                                 .getJSONArray("choices").getJSONObject(0)
                                 .getJSONObject("message").optString("content", "")
-                            JSONObject().put("ok", true).put("mode", "live").put("model", model)
+                            val o = JSONObject().put("ok", true).put("mode", "live").put("model", testModel)
                                 .put("base_url", base).put("message", msg.take(200))
+                            if (testModel != modelRaw) {
+                                o.put("requested_model", modelRaw)
+                                o.put("note", "Used test model '$testModel' instead of '$modelRaw' (OpenAI-style id on NVIDIA).")
+                            }
+                            o
                         }
                     }
                 } finally {
@@ -690,11 +784,11 @@ class OrgStore(context: Context) {
                 }
             }
         } catch (e: TimeoutException) {
-            JSONObject().put("ok", false).put("mode", "live").put("model", model)
+            JSONObject().put("ok", false).put("mode", "live").put("model", modelRaw)
                 .put("base_url", baseUrlRaw)
                 .put("error", "Timeout after 45s testing connection")
         } catch (e: Exception) {
-            JSONObject().put("ok", false).put("mode", "live").put("model", model)
+            JSONObject().put("ok", false).put("mode", "live").put("model", modelRaw)
                 .put("base_url", baseUrlRaw)
                 .put("error", "Connection failed: ${e.message ?: "error"}")
         }
@@ -732,7 +826,7 @@ class OrgStore(context: Context) {
                     readTimeout = 45_000
                     instanceFollowRedirects = true
                     setRequestProperty("Authorization", "Bearer $apiKey")
-                    setRequestProperty("User-Agent", "NEHA/2.1.4")
+                    setRequestProperty("User-Agent", "NEHA/2.1.5")
                     setRequestProperty("Accept", "application/json")
                 }
                 try {

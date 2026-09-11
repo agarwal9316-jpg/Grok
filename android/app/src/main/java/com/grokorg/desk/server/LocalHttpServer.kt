@@ -31,7 +31,7 @@ class LocalHttpServer(
 
             when {
                 uri == "/health" && method == Method.GET ->
-                    json(JSONObject().put("status", "ok").put("version", "2.1.4"))
+                    json(JSONObject().put("status", "ok").put("version", "2.1.5"))
 
                 uri == "/" && method == Method.GET ->
                     asset("www/index.html", "text/html")
@@ -85,7 +85,11 @@ class LocalHttpServer(
         }
         if ((p == "/config" || p == "/settings") && method == Method.PUT) {
             if (jsonBody.length() == 0) throw ApiError(400, "No settings to update")
-            return json(store.updateSettings(jsonBody))
+            try {
+                return json(store.updateSettings(jsonBody))
+            } catch (e: IllegalArgumentException) {
+                throw ApiError(400, e.message ?: "Invalid settings")
+            }
         }
         if (p == "/bootstrap" && method == Method.POST) {
             val name = jsonBody.optString("name", "Grok Demo Org").ifBlank { "Grok Demo Org" }

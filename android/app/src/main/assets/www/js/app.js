@@ -1,4 +1,4 @@
-/* N.E.H.A 2.1.4 — providers + robust model fetch/test */
+/* N.E.H.A 2.1.5 — NVIDIA entitlement hints + model auto-fix */
 (() => {
   const state = {
     org: null,
@@ -23,6 +23,59 @@
 
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => [...document.querySelectorAll(sel)];
+
+  const NVIDIA_FALLBACK_MODEL = "meta/llama-3.1-8b-instruct";
+
+  function trimApiKey(key) {
+    if (key == null) return "";
+    let k = String(key).replace(/\uFEFF/g, "").replace(/\u200B/g, "");
+    k = k.replace(/[\r\n\t]/g, "");
+    return k.trim();
+  }
+
+  function isNvidiaHost(url) {
+    return /nvidia\.com/i.test(url || "");
+  }
+
+  function looksOpenAiModel(model) {
+    const m = String(model || "").trim().toLowerCase();
+    if (!m) return false;
+    if (m.startsWith("gpt-")) return true;
+    if (m.startsWith("o1") || m.startsWith("o3")) return true;
+    return false;
+  }
+
+  function currentProviderId() {
+    return ($("#cfg-provider")?.value || "").toLowerCase();
+  }
+
+  function nvidiaContext() {
+    const base = ($("#cfg-base")?.value || "").trim();
+    const provider = currentProviderId();
+    return provider === "nvidia" || isNvidiaHost(base);
+  }
+
+  function updateNvidiaModelWarn() {
+    const el = $("#cfg-nvidia-warn");
+    if (!el) return;
+    const model = ($("#cfg-model")?.value || state.currentModel || "").trim();
+    const show = nvidiaContext() && looksOpenAiModel(model);
+    el.classList.toggle("hidden", !show);
+  }
+
+  function resolveTestModel(overrides) {
+    const base = overrides.openai_base_url || ($("#cfg-base")?.value || "").trim();
+    let model = overrides.openai_model || ($("#cfg-model")?.value || "").trim() || state.currentModel;
+    if (isNvidiaHost(base) || currentProviderId() === "nvidia") {
+      if (looksOpenAiModel(model)) {
+        const ids = state.models || [];
+        const pick = ids.find((id) => id && !looksOpenAiModel(id)) || ids[0] || NVIDIA_FALLBACK_MODEL;
+        model = pick;
+      }
+    }
+    return model;
+  }
+
 
   function toast(msg, type = "") {
     const el = $("#toast");
@@ -86,14 +139,22 @@
     localStorage.setItem(CUSTOM_PROVIDERS_KEY, JSON.stringify(list || []));
   }
 
-  function formLlmOverrides() {
+  function formLlmOverrides({ forTest } = {}) {
     const payload = {};
     const base = ($("#cfg-base")?.value || "").trim();
     const model = ($("#cfg-model")?.value || "").trim();
-    const key = ($("#cfg-key")?.value || "").trim();
+    const rawKey = $("#cfg-key")?.value || "";
+    const key = trimApiKey(rawKey);
     if (base) payload.openai_base_url = base;
     if (model) payload.openai_model = model;
-    if (key) payload.openai_api_key = key;
+    if (rawKey.length && !key) {
+      payload._emptyKeyAfterTrim = true;
+    } else if (key) {
+      payload.openai_api_key = key;
+    }
+    if (forTest) {
+      payload.openai_model = resolveTestModel(payload);
+    }
     return payload;
   }
 
@@ -231,6 +292,7 @@
         badge.classList.remove("live");
       }
     }
+    updateNvidiaModelWarn();
   }
 
   function ensureModelOption(selectEl, id) {
@@ -337,13 +399,31 @@
         if (out) out.textContent = `FAIL: ${err}`;
         throw new Error(err);
       }
-      fillModelSelects(res.models || res.data || [], state.currentModel);
+      const models = res.models || res.data || [];
+      const ids = models.map((m) => (typeof m === "string" ? m : m.id)).filter(Boolean);
+      let selected = state.currentModel;
+      let autoSaved = false;
+      if (ids.length && selected && !ids.includes(selected)) {
+        selected = ids[0];
+        fillModelSelects(models, selected);
+        try {
+          await saveModel(selected);
+          autoSaved = true;
+        } catch (e) {
+          console.warn("auto-select model save failed", e);
+        }
+      } else {
+        fillModelSelects(models, selected);
+      }
+      updateNvidiaModelWarn();
       if (out) {
         const note = res.note ? `\n${res.note}` : "";
+        const auto = autoSaved ? `\nAuto-selected + saved model: ${selected}` : "";
         out.textContent = res.ok
-          ? `Loaded ${(res.models || []).length} models (${res.mode})${note}`
+          ? `Loaded ${ids.length} models (${res.mode})${note}${auto}`
           : `FAIL: ${res.error || JSON.stringify(res, null, 2)}`;
       }
+      return res;
       return res;
     } catch (e) {
       const msg = e && e.message ? e.message : String(e);
@@ -919,6 +999,7 @@
       $("#cfg-model").value = v;
       syncModelUI(v);
     }
+    updateNvidiaModelWarn();
   });
 
   $("#model-picker")?.addEventListener("change", async (ev) => {
@@ -980,7 +1061,10 @@
     const bu = opt?.dataset?.baseUrl || "";
     if (bu && $("#cfg-base")) $("#cfg-base").value = bu;
     toggleCustomRow();
+    updateNvidiaModelWarn();
   });
+  $("#cfg-base")?.addEventListener("input", updateNvidiaModelWarn);
+  $("#cfg-model")?.addEventListener("input", updateNvidiaModelWarn);
 
   $("#cfg-add-provider")?.addEventListener("click", async () => {
     const name = ($("#cfg-custom-name")?.value || "").trim();
@@ -996,17 +1080,26 @@
     toast(`Saved provider ${name}`, "success");
   });
 
-  $("#cfg-test").addEventListener("click", async () => {
+    $("#cfg-test").addEventListener("click", async () => {
     const out = $("#cfg-test-result");
     out.classList.remove("hidden");
     out.textContent = "Testing…";
     try {
-      const overrides = formLlmOverrides();
-      if (Object.keys(overrides).length) {
+      const overrides = formLlmOverrides({ forTest: true });
+      if (overrides._emptyKeyAfterTrim) {
+        out.textContent = "FAIL: API key is empty after trim — remove spaces/newlines and paste again.";
+        return;
+      }
+      delete overrides._emptyKeyAfterTrim;
+      const savePayload = { ...overrides };
+      // Save the intended UI model (not only the test fallback) when present in the field
+      const uiModel = ($("#cfg-model")?.value || "").trim();
+      if (uiModel) savePayload.openai_model = uiModel;
+      if (Object.keys(savePayload).length) {
         try {
           await api("/api/settings", {
             method: "PUT",
-            body: JSON.stringify(overrides),
+            body: JSON.stringify(savePayload),
             timeoutMs: 15000,
           });
         } catch (e) {
@@ -1019,12 +1112,15 @@
         timeoutMs: 45000,
       });
       if (res && res.ok === false) {
-        out.textContent = `FAIL: ${res.error || JSON.stringify(res, null, 2)}`;
+        const body = res.body ? `\nBody: ${res.body}` : "";
+        const note = res.note ? `\n${res.note}` : "";
+        out.textContent = `FAIL: ${res.error || JSON.stringify(res, null, 2)}${note}${body}`;
       } else {
         const mode = res?.mode || "?";
         const model = res?.model || overrides.openai_model || "";
         const msg = res?.message || "ok";
-        out.textContent = `PASS (${mode}) model=${model}\n${typeof msg === "string" ? msg : JSON.stringify(res, null, 2)}`;
+        const note = res?.note ? `\n${res.note}` : "";
+        out.textContent = `PASS (${mode}) model=${model}\n${typeof msg === "string" ? msg : JSON.stringify(res, null, 2)}${note}`;
       }
     } catch (e) {
       out.classList.remove("hidden");
@@ -1049,6 +1145,15 @@
       const m = ($("#cfg-model")?.value || "").trim();
       if (m) payload.openai_model = m;
     }
+    if (payload._emptyKeyAfterTrim) {
+      toast("API key empty after trim", "error");
+      if (out) {
+        out.classList.remove("hidden");
+        out.textContent = "FAIL: API key is empty after trim — remove spaces/newlines and paste again.";
+      }
+      return false;
+    }
+    delete payload._emptyKeyAfterTrim;
     if (!Object.keys(payload).length) {
       toast("Nothing to save", "error");
       if (out) {

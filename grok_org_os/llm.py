@@ -57,6 +57,113 @@ def normalize_base_url(url: str) -> str:
 
 
 
+
+
+NVIDIA_FALLBACK_MODEL = "meta/llama-3.1-8b-instruct"
+NEHA_USER_AGENT = "NEHA/2.1.5"
+
+
+def trim_api_key(key: str | None) -> str:
+    """Aggressively strip whitespace/newlines/BOM from an API key."""
+    if key is None:
+        return ""
+    k = str(key).replace("\ufeff", "").replace("\u200b", "")
+    # Remove CR/LF/tabs anywhere (common paste artifacts); then strip ends
+    for ch in ("\r", "\n", "\t"):
+        k = k.replace(ch, "")
+    return k.strip()
+
+
+def is_nvidia_host(url: str | None) -> bool:
+    """True when base URL points at NVIDIA integrate / build APIs."""
+    return "nvidia.com" in (url or "").lower()
+
+
+def looks_openai_model(model: str | None) -> bool:
+    """True for OpenAI-style ids (gpt-*, o1*, o3*) that NVIDIA rejects."""
+    m = (model or "").strip().lower()
+    if not m:
+        return False
+    if m.startswith("gpt-"):
+        return True
+    if m.startswith("o1") or m.startswith("o3"):
+        return True
+    return False
+
+
+def resolve_nvidia_test_model(
+    base_url: str,
+    model: str,
+    fetched_ids: list[str] | None = None,
+) -> str:
+    """When testing NVIDIA with an OpenAI-looking model, pick a valid NIM id."""
+    if not is_nvidia_host(base_url):
+        return model
+    if not looks_openai_model(model):
+        return model
+    for mid in fetched_ids or []:
+        if mid and not looks_openai_model(mid):
+            return mid
+    if fetched_ids:
+        return fetched_ids[0]
+    return NVIDIA_FALLBACK_MODEL
+
+
+def format_llm_http_error(
+    status_code: int,
+    base_url: str,
+    model: str,
+    body: str,
+    *,
+    url: str | None = None,
+) -> str:
+    """Human-readable Test/Fetch errors; NVIDIA entitlement + wrong-model hints."""
+    snippet = (body or "").strip().replace("\n", " ")
+    if len(snippet) > 400:
+        snippet = snippet[:400] + "…"
+    lower_body = snippet.lower()
+    nvidia = is_nvidia_host(base_url)
+
+    if nvidia and status_code in (401, 403):
+        return (
+            f"{status_code} from NVIDIA chat/completions — your key may list models "
+            f"(GET /v1/models often returns 200) while chat is denied until "
+            f'"Public API Endpoints" is enabled on the NGC/org. '
+            f"Open https://build.nvidia.com (or ask NVIDIA support) to enable "
+            f"Public API Endpoints, then retry. "
+            f"Verify with curl against {(base_url or '').rstrip('/')}/chat/completions "
+            f"(Authorization: Bearer KEY, model={model}). "
+            f"Body: {snippet or '(empty)'}"
+        )
+
+    model_hint = (
+        "model" in lower_body
+        or "not found" in lower_body
+        or "does not exist" in lower_body
+        or "unknown" in lower_body
+        or looks_openai_model(model)
+    )
+    if nvidia and status_code in (400, 404) and model_hint:
+        return (
+            f"HTTP {status_code}: pick a NVIDIA model from Fetch models "
+            f"(not gpt-4o-mini / OpenAI ids). Current model={model!r}. "
+            f"Body: {snippet or '(empty)'}"
+        )
+
+    if status_code == 401:
+        base = "401 Unauthorized — API key rejected. Check key and provider."
+        return f"{base} Body: {snippet}" if snippet else base
+
+    if status_code == 404:
+        where = url or f"{(base_url or '').rstrip('/')}/…"
+        return (
+            f"404 Not Found at {where}. "
+            f"Normalize base URL (no trailing slash; often needs /v1). "
+            f"Body: {snippet or '(empty)'}"
+        )
+
+    return f"HTTP {status_code}: {snippet or '(empty body)'}"
+
 def parse_models_payload(payload: Any) -> list[dict[str, str]]:
     """Parse OpenAI-style {data:[{id}]} (or bare list) into [{id, owned_by}]."""
     raw = payload.get("data") if isinstance(payload, dict) else None
@@ -139,7 +246,8 @@ class LLMClient:
         model: str | None = None,
     ) -> None:
         settings = get_settings()
-        self.api_key = api_key if api_key is not None else settings.openai_api_key
+        raw_key = api_key if api_key is not None else settings.openai_api_key
+        self.api_key = trim_api_key(raw_key)
         self.base_url = normalize_base_url(base_url or settings.openai_base_url)
         self.model = model or settings.openai_model
 
@@ -275,7 +383,7 @@ class LLMClient:
         url = f"{self.base_url.rstrip('/')}/models"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
-            "User-Agent": "NEHA/2.1.4",
+            "User-Agent": NEHA_USER_AGENT,
             "Accept": "application/json",
         }
         try:
@@ -354,19 +462,28 @@ class LLMClient:
                 "data": [],
             }
 
-    def test_connection(self) -> dict[str, Any]:
+    def test_connection(self, fetched_model_ids: list[str] | None = None) -> dict[str, Any]:
         """Ping the model with a tiny completion; surface clear HTTP errors."""
         if self.use_mock:
             return {"ok": True, "mode": "mock", "model": self.model, "message": "Mock LLM ready"}
+        if not self.api_key:
+            return {
+                "ok": False,
+                "mode": "live",
+                "model": self.model,
+                "base_url": self.base_url,
+                "error": "API key is empty after trim — paste the key again (no spaces/newlines).",
+            }
+        test_model = resolve_nvidia_test_model(self.base_url, self.model, fetched_model_ids)
         url = f"{self.base_url}/chat/completions"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "User-Agent": "NEHA/2.1.4",
+            "User-Agent": NEHA_USER_AGENT,
             "Accept": "application/json",
         }
         payload = {
-            "model": self.model,
+            "model": test_model,
             "messages": [{"role": "user", "content": "Reply with exactly: pong"}],
             "max_tokens": 16,
             "temperature": 0,
@@ -374,51 +491,52 @@ class LLMClient:
         try:
             with httpx.Client(timeout=45.0, follow_redirects=True) as client:
                 resp = client.post(url, headers=headers, json=payload)
-                if resp.status_code == 401:
-                    return {
-                        "ok": False,
-                        "mode": "live",
-                        "model": self.model,
-                        "base_url": self.base_url,
-                        "error": "401 Unauthorized — API key rejected. Check key and provider.",
-                        "status_code": 401,
-                    }
-                if resp.status_code == 404:
-                    return {
-                        "ok": False,
-                        "mode": "live",
-                        "model": self.model,
-                        "base_url": self.base_url,
-                        "error": (
-                            f"404 Not Found at {url}. "
-                            "Normalize base URL (no trailing slash; often needs /v1). "
-                            "Example: https://api.openai.com/v1 or https://openrouter.ai/api/v1"
-                        ),
-                        "status_code": 404,
-                    }
+                body_text = resp.text or ""
                 if resp.status_code >= 400:
-                    return {
+                    err = format_llm_http_error(
+                        resp.status_code,
+                        self.base_url,
+                        test_model,
+                        body_text,
+                        url=url,
+                    )
+                    out = {
                         "ok": False,
                         "mode": "live",
-                        "model": self.model,
+                        "model": test_model,
+                        "requested_model": self.model,
                         "base_url": self.base_url,
-                        "error": f"HTTP {resp.status_code}: {(resp.text or '')[:400]}",
+                        "error": err,
                         "status_code": resp.status_code,
+                        "body": body_text[:400],
                     }
+                    if test_model != self.model:
+                        out["note"] = (
+                            f"Used test model {test_model!r} instead of "
+                            f"{self.model!r} (OpenAI-style id on NVIDIA)."
+                        )
+                    return out
                 data = resp.json()
                 msg = data["choices"][0]["message"]
-                return {
+                result = {
                     "ok": True,
                     "mode": "live",
-                    "model": self.model,
+                    "model": test_model,
                     "base_url": self.base_url,
                     "message": (msg.get("content") or "")[:200],
                 }
+                if test_model != self.model:
+                    result["requested_model"] = self.model
+                    result["note"] = (
+                        f"Used test model {test_model!r} instead of "
+                        f"{self.model!r} (OpenAI-style id on NVIDIA)."
+                    )
+                return result
         except httpx.TimeoutException as exc:
             return {
                 "ok": False,
                 "mode": "live",
-                "model": self.model,
+                "model": test_model,
                 "base_url": self.base_url,
                 "error": f"Timeout after 45s testing {url}: {exc}",
             }
@@ -426,12 +544,19 @@ class LLMClient:
             return {
                 "ok": False,
                 "mode": "live",
-                "model": self.model,
+                "model": test_model,
                 "base_url": self.base_url,
                 "error": f"Connection failed: {exc}. Wrong host, offline, or SSL error.",
             }
         except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "mode": "live", "model": self.model, "base_url": self.base_url, "error": str(exc)}
+            return {
+                "ok": False,
+                "mode": "live",
+                "model": test_model,
+                "base_url": self.base_url,
+                "error": str(exc),
+            }
+
 
     def _mock_message(
         self,

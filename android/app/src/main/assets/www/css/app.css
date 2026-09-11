@@ -873,3 +873,14 @@ dialog::backdrop {
 }
 .provider-custom-row .grow { flex: 1; min-width: 140px; }
 .provider-custom-row.hidden { display: none; }
+
+.hint.warn {
+  color: #f0c14a;
+  background: rgba(240, 193, 74, 0.12);
+  border: 1px solid rgba(240, 193, 74, 0.35);
+  border-radius: 8px;
+  padding: 0.55rem 0.75rem;
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}

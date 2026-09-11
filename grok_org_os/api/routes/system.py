@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from grok_org_os.api.deps import get_db
 from grok_org_os.bootstrap import bootstrap_sample_org
 from grok_org_os.config import get_settings, reset_settings_cache
-from grok_org_os.llm import LLMClient, normalize_base_url, set_llm_client
+from grok_org_os.llm import LLMClient, normalize_base_url, set_llm_client, trim_api_key
 from grok_org_os.providers import list_providers
 from grok_org_os.models import Message, Task, TaskStatus
 from grok_org_os.schemas import (
@@ -36,7 +36,7 @@ class ConfigRead(BaseModel):
     database_url: str
     host: str
     port: int
-    version: str = "2.1.4"
+    version: str = "2.1.5"
     workspace_dir: str = "workspace"
 
 
@@ -161,7 +161,14 @@ def get_app_settings() -> ConfigRead:
 def update_app_settings(payload: SettingsUpdate) -> ConfigRead:
     updates: dict[str, str] = {}
     if payload.openai_api_key is not None:
-        updates["OPENAI_API_KEY"] = payload.openai_api_key
+        trimmed = trim_api_key(payload.openai_api_key)
+        # Allow clearing the key with empty string; reject whitespace-only paste
+        if payload.openai_api_key != "" and not trimmed:
+            raise HTTPException(
+                status_code=400,
+                detail="API key is empty after trim — remove spaces/newlines and paste again.",
+            )
+        updates["OPENAI_API_KEY"] = trimmed
     if payload.openai_base_url is not None:
         updates["OPENAI_BASE_URL"] = normalize_base_url(payload.openai_base_url)
     if payload.openai_model is not None:
@@ -194,12 +201,18 @@ def update_app_settings(payload: SettingsUpdate) -> ConfigRead:
 def _client_from_overrides(payload: LlmOverrideBody | None = None) -> LLMClient:
     """Build LLMClient using optional JSON body overrides (form values)."""
     settings = get_settings()
-    key = settings.openai_api_key
+    key = trim_api_key(settings.openai_api_key)
     base = settings.openai_base_url
     model = settings.openai_model
     if payload is not None:
-        if payload.openai_api_key is not None and str(payload.openai_api_key).strip():
-            key = str(payload.openai_api_key).strip()
+        if payload.openai_api_key is not None:
+            trimmed = trim_api_key(payload.openai_api_key)
+            # Non-empty raw that trims to empty → treat as explicit bad paste
+            if str(payload.openai_api_key) != "" and not trimmed:
+                # Leave key empty so test_connection returns clear trim error
+                key = ""
+            elif trimmed:
+                key = trimmed
         if payload.openai_base_url is not None and str(payload.openai_base_url).strip():
             base = normalize_base_url(str(payload.openai_base_url).strip())
         if payload.openai_model is not None and str(payload.openai_model).strip():

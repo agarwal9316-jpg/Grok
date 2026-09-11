@@ -145,6 +145,10 @@
       <label>Model id (saved)
         <input id="cfg-model" type="text" placeholder="gpt-4o-mini" />
       </label>
+      <p id="cfg-nvidia-warn" class="hint warn hidden" role="status">
+        NVIDIA selected but model looks like OpenAI (gpt-/o1/o3). Fetch models and pick a NIM id
+        (e.g. meta/llama-3.1-8b-instruct). Test will use a NVIDIA fallback model automatically.
+      </p>
       <div class="dialog-actions" style="justify-content:space-between">
         <button type="button" class="btn" id="cfg-test">Test connection</button>
         <div style="display:flex;gap:0.5rem">

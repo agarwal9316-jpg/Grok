@@ -6,7 +6,15 @@ The **PC / Windows app is first-class** (double-click `Start.bat`). Android APK 
 
 ---
 
-## What’s new in 2.1.4
+## What's new in 2.1.5
+
+- NVIDIA Build keys: clearer **401/403** Test errors when models list works but chat is denied (enable **Public API Endpoints** on NGC/org at [build.nvidia.com](https://build.nvidia.com))
+- Test auto-swaps OpenAI-looking models (`gpt-*` / `o1*` / `o3*`) to a NIM id when provider is NVIDIA
+- After **Fetch models**, if the current model is not in the list, auto-select the first model and save
+- Aggressive API-key trim (whitespace/newlines); empty-after-trim rejected with a clear message
+- Android **2.1.5** (versionCode 10); APK `NEHA-2.1.5-debug.apk` (+ `GrokOrgOS-2.1.5-debug.apk` compat)
+
+## What's new in 2.1.4
 
 - Product rename: **N.E.H.A** (display name); package id `com.grokorg.desk` unchanged for update continuity
 - APK artifacts: `NEHA-2.1.4-debug.apk` (+ `GrokOrgOS-2.1.4-debug.apk` compat copy)
@@ -33,7 +41,7 @@ The **PC / Windows app is first-class** (double-click `Start.bat`). Android APK 
 - Clear connection errors (401 / 404 / wrong trailing slash / missing `/v1`)
 - Base URL normalization (strip trailing `/`; smart `/v1` append for known hosts)
 - Polished desk: avatar bubbles, sticky compose, More menu, mobile WebView tabs
-- Android **2.1.4** (versionCode 9) mirrors `/api/models` on-device
+- Android **2.1.5** (versionCode 10) mirrors `/api/models` on-device
 
 ---
 
@@ -63,6 +71,25 @@ First launch creates `.venv`, installs deps (including APScheduler), copies `.en
 Trailing slash is stripped. If you paste a bare host (e.g. `https://api.openai.com` or `https://openrouter.ai/api`), the server appends `/v1` when appropriate.
 
 Optional connectors in `.env`: `SMTP_*`, `WEBHOOK_URL`, `REST_*`, `GOOGLE_*` (stubs activate when tokens present).
+
+
+### NVIDIA NIM / Build troubleshooting
+
+NVIDIA Build / NGC API keys often return **200 on `GET /v1/models`** but **401/403 on `POST /v1/chat/completions`** until **Public API Endpoints** is enabled for your org. Fix:
+
+1. Open [build.nvidia.com](https://build.nvidia.com) (or NGC) and enable **Public API Endpoints** for the organisation that owns the key — or ask NVIDIA support.
+2. In N.E.H.A Settings choose provider **NVIDIA NIM**, paste the key, **Fetch models**, pick a NIM id (not `gpt-4o-mini`).
+3. **Test connection** — if still 401/403, verify with curl:
+
+```bash
+curl -sS -H "Authorization: Bearer $NVIDIA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"meta/llama-3.1-8b-instruct","messages":[{"role":"user","content":"hi"}],"max_tokens":8}' \
+  https://integrate.api.nvidia.com/v1/chat/completions | head -c 400
+```
+
+Also trim the key carefully (no trailing newline when pasting).
+
 
 ---
 
@@ -100,7 +127,7 @@ Do these after `Start.bat` **or** installing the Android APK. Every item is impl
 | 7 | **Offline mock** | Clear API key → Save → badge `Mock · …` → Run Demo still works with tool-calling mock. `/api/models` returns curated list + note. |
 | 8 | **Android in-app update** | Menu → Check for updates → Download & Install (GitHub APK, prefers `*debug*.apk`). |
 | 9 | **Tests green** | `pip install -e ".[dev]" && pytest -q` — includes `/api/models` (mock httpx). |
-| 10 | **Ship** | `Start.bat` on PC; APK `android/dist/NEHA-2.1.4-debug.apk`; GitHub release `v2.1.4`. |
+| 10 | **Ship** | `Start.bat` on PC; APK `android/dist/NEHA-2.1.5-debug.apk`; GitHub release `v2.1.5`. |
 
 ### Surfaces
 
@@ -125,7 +152,7 @@ pytest -q
 
 ## Android standalone
 
-APK: **`android/dist/NEHA-2.1.4-debug.apk`** (versionName **2.1.4**, versionCode **9**). Compat copy: `GrokOrgOS-2.1.4-debug.apk`.
+APK: **`android/dist/NEHA-2.1.5-debug.apk`** (versionName **2.1.5**, versionCode **10**). Compat copy: `GrokOrgOS-2.1.5-debug.apk`.
 
 - On-device NanoHTTPD backend + same desk UI (assets synced from `grok_org_os/static/`)
 - `/api/models` fetches remote models with `HttpURLConnection` when key is set
