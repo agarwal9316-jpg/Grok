@@ -14,7 +14,10 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.grokorg.desk.databinding.ActivityDeskBinding
+import com.grokorg.desk.server.LocalBackend
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class DeskActivity : AppCompatActivity() {
     private lateinit var binding: ActivityDeskBinding
@@ -81,7 +84,13 @@ class DeskActivity : AppCompatActivity() {
         } else {
             binding.toolbar.title = getString(R.string.desk_title)
             lifecycleScope.launch {
-                val base = prefs.serverUrl
+                val base = withContext(Dispatchers.IO) {
+                    if (prefs.useOnDevice) {
+                        LocalBackend.get(this@DeskActivity).baseUrl()
+                    } else {
+                        prefs.remoteServerUrl
+                    }
+                }
                 val ok = ServerProbe.isReachable(base)
                 if (ok) {
                     web.loadUrl("$base/")

@@ -6,6 +6,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.grokorg.desk.databinding.ActivityMainBinding
+import com.grokorg.desk.server.LocalBackend
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
@@ -18,19 +19,22 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         prefs = AppPrefs(this)
 
+        // Ensure local backend is up
+        LocalBackend.get(this)
+
         setSupportActionBar(binding.toolbar)
         supportActionBar?.setDisplayShowTitleEnabled(true)
 
         val versionName = try {
-            packageManager.getPackageInfo(packageName, 0).versionName ?: "1.1.0"
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "1.2.0"
         } catch (_: Exception) {
-            "1.1.0"
+            "1.2.0"
         }
         val versionCode = try {
             @Suppress("DEPRECATION")
             packageManager.getPackageInfo(packageName, 0).versionCode
         } catch (_: Exception) {
-            2
+            3
         }
         binding.versionText.text = getString(R.string.version_fmt, versionName, versionCode)
 
@@ -73,14 +77,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshServerStatus() {
-        val url = prefs.serverUrl
-        binding.serverUrlText.text = url
+        val url = prefs.effectiveServerUrl()
+        binding.serverUrlText.text = if (prefs.useOnDevice) {
+            getString(R.string.mode_on_device_label, url)
+        } else {
+            getString(R.string.mode_remote_label, url)
+        }
         binding.statusText.text = getString(R.string.status_checking)
         binding.statusText.setTextColor(getColor(R.color.warn))
         lifecycleScope.launch {
             val ok = ServerProbe.isReachable(url)
             if (ok) {
-                binding.statusText.text = getString(R.string.status_online)
+                binding.statusText.text = if (prefs.useOnDevice) {
+                    getString(R.string.status_on_device)
+                } else {
+                    getString(R.string.status_online)
+                }
                 binding.statusText.setTextColor(getColor(R.color.ok))
             } else {
                 binding.statusText.text = getString(R.string.status_offline)
@@ -95,9 +107,9 @@ class MainActivity : AppCompatActivity() {
             result.fold(
                 onSuccess = { release ->
                     val current = try {
-                        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.1.0"
+                        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.2.0"
                     } catch (_: Exception) {
-                        "1.1.0"
+                        "1.2.0"
                     }
                     if (UpdateChecker.isNewer(release.tagName, current)) {
                         UpdateChecker.showUpdateDialog(this@MainActivity, release)

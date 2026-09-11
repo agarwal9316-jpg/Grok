@@ -1,8 +1,8 @@
 # Grok Org OS
 
-Portable multi-agent AI organization platform with a **full desk-style GUI**. Model an organisation with a human CEO, an AI Chief of Staff, specialist teams (Ops / Research / Comms), channels, messages, and tasks — then run collaboration end-to-end.
+Portable multi-agent AI organization platform with a **full desk-style GUI**. The **Android APK is fully standalone** (on-device backend); PC launchers are for desktop use. Model an organisation with a human CEO, an AI Chief of Staff, specialist teams (Ops / Research / Comms), channels, messages, and tasks — then run collaboration end-to-end.
 
-## Windows (double-click)
+## Windows (double-click) — desktop / PC optional
 
 **Requirement:** [Python 3.11+](https://www.python.org/downloads/) installed and on PATH  
 (check *“Add python.exe to PATH”* during install). No Docker or Node required.
@@ -145,9 +145,11 @@ Copy `.env.example` to `.env` and adjust as needed (or use the Settings panel).
 - System: `GET/PUT /api/settings`, `POST /api/bootstrap`, `POST /api/demo`
 
 
-## Android APK
+## Android APK (standalone)
 
-A Kotlin WebView client lives in `android/` (`com.grokorg.desk` **v1.1.0**).
+A Kotlin app in `android/` (`com.grokorg.desk` **v1.2.0**) runs the **full Grok Org OS on the phone** — embedded local HTTP backend + SQLite + desk GUI. **No PC required.**
+
+PC `Start.bat` / `start.sh` remain optional for desktop use only.
 
 ### Install the APK
 
@@ -156,21 +158,19 @@ A Kotlin WebView client lives in `android/` (`com.grokorg.desk` **v1.1.0**).
 ```bash
 cd android
 ./build-apk.sh
-# → android/dist/GrokOrgOS-1.1.0-debug.apk
+# → android/dist/GrokOrgOS-1.2.0-debug.apk
 ```
 
 2. Copy the APK to your phone and open it (enable “Install unknown apps” for your file manager / browser).
-3. Or with USB debugging: `adb install -r android/dist/GrokOrgOS-1.1.0-debug.apk`
+3. Or with USB debugging: `adb install -r android/dist/GrokOrgOS-1.2.0-debug.apk`
 
-### Point the app at your Windows server
+### Use on the phone
 
-1. On the PC, run **`Start.bat`** so the desk GUI listens on port **8000**.
-2. Find the PC LAN IP (`ipconfig` → IPv4, e.g. `192.168.1.42`).
-3. In the app: **Settings** → set Server URL to `http://192.168.1.42:8000` → Save.
-4. Tap **Open Desk** — the WebView loads `{server}/`.
-5. Emulator default is `http://10.0.2.2:8000` (maps to the host loopback).
-6. Phone and PC must share Wi‑Fi; allow Windows Firewall for Python / port 8000.
-7. If the API is unreachable, use **Demo / Offline shell** for setup instructions.
+1. Open **Grok Org OS** → tap **Open Desk**.
+2. The WebView loads `http://127.0.0.1:<port>/` served by the in-app backend.
+3. **Run Demo** works offline with the mock LLM.
+4. In the desk **⚙ Settings**, optionally paste an OpenAI-compatible API key for live models.
+5. App **Settings** default is **On-device (standalone)**; advanced users can override with a remote server URL (e.g. PC running `Start.bat`).
 
 ### In-app updates
 
