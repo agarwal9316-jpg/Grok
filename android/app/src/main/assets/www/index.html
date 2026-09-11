@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Grok Org OS</title>
+  <link rel="stylesheet" href="css/app.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231a1a2e'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-size='16' fill='%237c9cff'%3EG%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">G</span>
+        <div>
+          <strong>Grok Org OS</strong>
+          <span class="muted" id="llm-badge">Mock LLM</span>
+        </div>
+      </div>
+      <div class="top-actions">
+        <span class="muted" style="margin-right:0.35rem"><span class="status-dot"></span>Desk</span>
+        <button id="btn-bootstrap" class="btn" title="Create sample org">Bootstrap</button>
+        <button id="btn-demo" class="btn btn-primary" title="Run end-to-end demo">Run Demo</button>
+        <button id="btn-settings" class="btn btn-ghost" title="Settings">⚙ Settings</button>
+        <a class="btn btn-ghost" href="/docs" target="_blank" rel="noopener">API Docs</a>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="sidebar">
+        <div class="panel-head">
+          <h2>Organisation</h2>
+          <button id="btn-refresh" class="btn btn-xs" title="Refresh">↻</button>
+        </div>
+        <div id="org-list" class="tree"></div>
+        <div class="panel-section">
+          <h3>Teams</h3>
+          <div id="team-list" class="tree"></div>
+        </div>
+        <div class="panel-section">
+          <h3>Agents</h3>
+          <div id="agent-list" class="tree"></div>
+        </div>
+        <div class="panel-section">
+          <h3>Channels</h3>
+          <div id="channel-list" class="tree"></div>
+        </div>
+        <!-- agent persona panel injected by JS (#agent-detail) -->
+      </aside>
+
+      <section class="center">
+        <div class="panel-head">
+          <h2 id="channel-title">Channel</h2>
+          <span class="muted" id="channel-sub">Select or bootstrap an org</span>
+        </div>
+        <div id="messages" class="messages"></div>
+        <form id="compose" class="compose">
+          <select id="compose-agent" title="Post as agent"></select>
+          <input id="compose-text" type="text" placeholder="Post a message to the channel…" autocomplete="off" />
+          <button type="submit" class="btn btn-primary">Send</button>
+        </form>
+      </section>
+
+      <aside class="rightbar">
+        <div class="panel-head">
+          <h2>Tasks</h2>
+        </div>
+        <form id="task-form" class="task-form">
+          <label>CEO Directive</label>
+          <input id="task-title" type="text" placeholder="Task title" required />
+          <textarea id="task-desc" rows="3" placeholder="Description / directive…"></textarea>
+          <button type="submit" class="btn btn-primary btn-block">Create &amp; Assign to CoS</button>
+        </form>
+        <div id="task-list" class="task-list"></div>
+      </aside>
+    </main>
+  </div>
+
+  <dialog id="settings-dialog">
+    <form method="dialog" id="settings-form" class="settings">
+      <h2>Settings</h2>
+      <p class="muted">Stored in local <code>.env</code> on the server. Leave API key empty for offline mock LLM.</p>
+      <label>OpenAI API Key
+        <input id="cfg-key" type="password" placeholder="sk-… (optional)" autocomplete="off" />
+      </label>
+      <label>API Base URL
+        <input id="cfg-base" type="url" placeholder="https://api.openai.com/v1" />
+      </label>
+      <label>Model
+        <input id="cfg-model" type="text" placeholder="gpt-4o-mini" />
+      </label>
+      <div class="dialog-actions">
+        <button type="submit" value="cancel" class="btn">Cancel</button>
+        <button type="submit" value="save" class="btn btn-primary" id="cfg-save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="js/app.js"></script>
+</body>
+</html>

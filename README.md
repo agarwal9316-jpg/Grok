@@ -144,6 +144,45 @@ Copy `.env.example` to `.env` and adjust as needed (or use the Settings panel).
 - Task actions: `POST /api/tasks/{id}/assign`, `/handoff`, `/run`
 - System: `GET/PUT /api/settings`, `POST /api/bootstrap`, `POST /api/demo`
 
+
+## Android APK
+
+A Kotlin WebView client lives in `android/` (`com.grokorg.desk` **v1.1.0**).
+
+### Install the APK
+
+1. Build (or download a release asset):
+
+```bash
+cd android
+./build-apk.sh
+# → android/dist/GrokOrgOS-1.1.0-debug.apk
+```
+
+2. Copy the APK to your phone and open it (enable “Install unknown apps” for your file manager / browser).
+3. Or with USB debugging: `adb install -r android/dist/GrokOrgOS-1.1.0-debug.apk`
+
+### Point the app at your Windows server
+
+1. On the PC, run **`Start.bat`** so the desk GUI listens on port **8000**.
+2. Find the PC LAN IP (`ipconfig` → IPv4, e.g. `192.168.1.42`).
+3. In the app: **Settings** → set Server URL to `http://192.168.1.42:8000` → Save.
+4. Tap **Open Desk** — the WebView loads `{server}/`.
+5. Emulator default is `http://10.0.2.2:8000` (maps to the host loopback).
+6. Phone and PC must share Wi‑Fi; allow Windows Firewall for Python / port 8000.
+7. If the API is unreachable, use **Demo / Offline shell** for setup instructions.
+
+### In-app updates
+
+- Menu / home: **Check for updates**
+- Calls GitHub Releases: `https://api.github.com/repos/agarwal9316-jpg/Grok/releases/latest`
+- Compares `tag_name` to the app `versionName`; if newer, shows release notes and **Download update** (APK asset URL or release page).
+- Optional **Auto-check updates on launch** toggle in Settings.
+
+### Build with Android Studio
+
+Open the `android/` folder in Android Studio (Giraffe+), sync Gradle, Run on a device/emulator. SDK 34 / JDK 17+.
+
 ## License
 
 MIT

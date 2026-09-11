@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Grok Org OS — Offline</title>
+  <style>
+    :root {
+      --bg: #0f0f1a;
+      --surface: #1a1a2e;
+      --accent: #7c9cff;
+      --text: #e8e8f0;
+      --muted: #9aa0b4;
+      --warn: #ffb020;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 1.25rem;
+    }
+    .card {
+      background: var(--surface);
+      border-radius: 14px;
+      padding: 1.25rem 1.35rem;
+      max-width: 520px;
+      margin: 0 auto;
+      border: 1px solid #2a2a44;
+    }
+    .logo {
+      display: inline-flex;
+      width: 40px; height: 40px;
+      border-radius: 10px;
+      background: #12122a;
+      color: var(--accent);
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      margin-bottom: 0.75rem;
+    }
+    h1 { font-size: 1.25rem; margin: 0 0 0.35rem; }
+    .badge {
+      display: inline-block;
+      background: #3a2a10;
+      color: var(--warn);
+      font-size: 0.75rem;
+      padding: 0.2rem 0.55rem;
+      border-radius: 999px;
+      margin-bottom: 0.85rem;
+    }
+    p, li { color: var(--muted); font-size: 0.95rem; }
+    code {
+      background: #12122a;
+      color: var(--accent);
+      padding: 0.1rem 0.35rem;
+      border-radius: 4px;
+      font-size: 0.85rem;
+    }
+    ol { padding-left: 1.2rem; }
+    .hint {
+      margin-top: 1rem;
+      padding: 0.75rem;
+      background: #12122a;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">G</div>
+    <div class="badge">Demo / offline shell</div>
+    <h1>Server not reachable</h1>
+    <p>
+      This Android app shows the Grok Org OS desk UI by connecting to the
+      FastAPI server on your PC (the same process started by <code>Start.bat</code>).
+    </p>
+    <ol>
+      <li>On Windows, double-click <code>Start.bat</code> (server on port <code>8000</code>).</li>
+      <li>Find your PC’s LAN IP (e.g. <code>ipconfig</code> → IPv4).</li>
+      <li>In the app, open <strong>Settings</strong> and set Server URL to
+        <code>http://&lt;LAN-IP&gt;:8000</code>.</li>
+      <li>Emulator tip: default <code>http://10.0.2.2:8000</code> maps to the host PC.</li>
+      <li>Phone and PC must be on the same Wi‑Fi; allow Windows Firewall for Python/port 8000.</li>
+    </ol>
+    <div class="hint">
+      Bundled desk assets are included under <code>assets/www/</code> for this offline
+      message. Once the API is reachable, use <strong>Open Desk</strong> to load
+      <code>{server}/</code> live.
+    </div>
+  </div>
+</body>
+</html>

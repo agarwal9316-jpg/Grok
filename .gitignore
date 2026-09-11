@@ -11,3 +11,14 @@ build/
 .mypy_cache/
 .ruff_cache/
 data/
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/*.iml
+# Keep shipped APK under android/dist/
+!android/dist/
+!android/dist/*.apk
