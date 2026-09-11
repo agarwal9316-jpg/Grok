@@ -27,7 +27,7 @@ if [[ -d "$STATIC_SRC" ]]; then
   fi
 fi
 
-VERSION_NAME="2.1.0"
+VERSION_NAME="2.1.1"
 
 chmod +x ./gradlew
 ./gradlew assembleDebug --no-daemon

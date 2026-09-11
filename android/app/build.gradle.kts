@@ -11,8 +11,8 @@ android {
         applicationId = "com.grokorg.desk"
         minSdk = 24
         targetSdk = 34
-        versionCode = 5
-        versionName = "2.1.0"
+        versionCode = 6
+        versionName = "2.1.1"
     }
 
     buildTypes {
@@ -48,4 +48,6 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.9.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.nanohttpd:nanohttpd:2.3.1")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }
