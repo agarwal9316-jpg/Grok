@@ -114,6 +114,8 @@ class MessageRead(ORMModel):
     agent_id: int
     content: str
     created_at: datetime
+    agent_name: Optional[str] = None
+    agent_role: Optional[AgentRole] = None
 
 
 # --- Task ---

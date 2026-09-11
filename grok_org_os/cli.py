@@ -1,8 +1,10 @@
-"""Typer CLI: grok-org bootstrap | serve | run-demo."""
+"""Typer CLI: grok-org bootstrap | serve | desktop | run-demo."""
 
 from __future__ import annotations
 
-import os
+import threading
+import time
+import webbrowser
 from typing import Optional
 
 import typer
@@ -12,7 +14,7 @@ from grok_org_os.bootstrap import bootstrap_sample_org
 from grok_org_os.config import get_settings
 from grok_org_os.db import SessionLocal, init_db
 from grok_org_os.llm import LLMClient, set_llm_client
-from grok_org_os.models import AgentRole, Message, Task, TaskStatus
+from grok_org_os.models import Message, Task, TaskStatus
 from grok_org_os.task_runner import TaskRunner
 
 app = typer.Typer(
@@ -45,25 +47,90 @@ def bootstrap(
         db.close()
 
 
+def _serve_url(host: str, port: int) -> str:
+    display_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    return f"http://{display_host}:{port}"
+
+
 @app.command()
 def serve(
     host: Optional[str] = typer.Option(None, help="Bind host"),
     port: Optional[int] = typer.Option(None, help="Bind port"),
     reload: bool = typer.Option(False, help="Auto-reload"),
+    open_browser: bool = typer.Option(
+        True, "--open/--no-open", help="Open GUI in default browser"
+    ),
 ) -> None:
-    """Start the FastAPI server (OpenAPI at /docs)."""
+    """Start the FastAPI server with full GUI at / (Swagger at /docs)."""
     settings = get_settings()
     bind_host = host or settings.host
     bind_port = port or settings.port
     init_db()
-    typer.echo(f"Serving Grok Org OS on http://{bind_host}:{bind_port}")
-    typer.echo("OpenAPI: /openapi.json  Swagger UI: /docs")
+    url = _serve_url(bind_host, bind_port)
+    typer.echo(f"Serving Grok Org OS GUI on {url}")
+    typer.echo(f"API: {url}/api  ·  OpenAPI: {url}/openapi.json  ·  Swagger: {url}/docs")
+
+    if open_browser:
+
+        def _open() -> None:
+            time.sleep(1.2)
+            try:
+                webbrowser.open(url)
+            except Exception:  # noqa: BLE001
+                pass
+
+        threading.Thread(target=_open, daemon=True).start()
+
     uvicorn.run(
         "grok_org_os.api.app:app",
         host=bind_host,
         port=bind_port,
         reload=reload,
     )
+
+
+@app.command()
+def desktop(
+    host: Optional[str] = typer.Option(None, help="Bind host"),
+    port: Optional[int] = typer.Option(None, help="Bind port"),
+) -> None:
+    """Open a native desktop window (pywebview) pointing at the local GUI server."""
+    settings = get_settings()
+    bind_host = host or "127.0.0.1"
+    bind_port = port or settings.port
+    init_db()
+    url = _serve_url(bind_host, bind_port)
+
+    def run_server() -> None:
+        uvicorn.run(
+            "grok_org_os.api.app:app",
+            host=bind_host,
+            port=bind_port,
+            log_level="info",
+        )
+
+    thread = threading.Thread(target=run_server, daemon=True)
+    thread.start()
+    time.sleep(1.0)
+
+    try:
+        import webview  # type: ignore
+    except ImportError:
+        typer.echo("pywebview not installed — opening browser instead.")
+        typer.echo("Install with: pip install 'grok-org-os[desktop]'")
+        webbrowser.open(url)
+        typer.echo(f"GUI: {url}  (Ctrl+C to stop)")
+        try:
+            while thread.is_alive():
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            typer.echo("Stopped.")
+        return
+
+    typer.echo(f"Desktop window → {url}")
+    window = webview.create_window("Grok Org OS", url, width=1280, height=800)
+    webview.start()
+    _ = window
 
 
 @app.command("run-demo")
@@ -78,7 +145,6 @@ def run_demo(
     ),
 ) -> None:
     """Create a task, assign to Chief of Staff, run collaboration, print messages."""
-    # Ensure mock LLM unless key is set
     set_llm_client(LLMClient())
     init_db()
     db = SessionLocal()
@@ -89,7 +155,6 @@ def run_demo(
         channel = data["channel"]
         ceo = data["agents"]["ceo"]
 
-        # CEO posts the directive
         runner = TaskRunner(db)
         runner.post_message(
             channel,
