@@ -2,12 +2,17 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 
-title Grok Org OS
+title Grok Org OS 2.0 — Full Power
 echo ========================================
-echo   Grok Org OS — portable desk GUI
+echo   Grok Org OS 2.0 — Full Power Desk
 echo ========================================
 echo.
-echo This folder is the portable app — copy it anywhere on Windows.
+echo Portable Windows app — copy this folder anywhere.
+echo OpenAI tool calling, multi-agent workers, connectors,
+echo approvals, files, and routines run on this PC.
+echo.
+echo Tip: set OPENAI_API_KEY in .env (or Settings in the GUI)
+echo      for live LLM + real tool calls. Empty key = mock mode.
 echo.
 
 where python >nul 2>&1
@@ -54,8 +59,11 @@ if not exist ".env" (
   if exist ".env.example" copy /Y ".env.example" ".env" >nul
 )
 
+if not exist "workspace" mkdir workspace
+
 echo.
-echo Starting API + GUI at http://127.0.0.1:8000
+echo Starting Full Power API + Desk GUI at http://127.0.0.1:8000
+echo   OpenAI settings: gear button in the GUI (or edit .env)
 echo   Docs: http://127.0.0.1:8000/docs
 echo   Stop: close this window or run Stop.bat
 echo.

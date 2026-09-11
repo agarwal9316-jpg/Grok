@@ -26,12 +26,12 @@ class LocalHttpServer(
             val method = session.method
             Log.d(TAG, "$method $uri")
 
-            // Parse body for POST/PUT/PATCH
-            val body = readBody(session)
+            val filesMap = HashMap<String, String>()
+            val body = readBody(session, filesMap)
 
             when {
                 uri == "/health" && method == Method.GET ->
-                    json(JSONObject().put("status", "ok").put("version", "1.2.0"))
+                    json(JSONObject().put("status", "ok").put("version", "2.0.0"))
 
                 uri == "/" && method == Method.GET ->
                     asset("www/index.html", "text/html")
@@ -40,7 +40,7 @@ class LocalHttpServer(
                     serveStatic(uri.removePrefix("/static/"))
 
                 uri.startsWith("/api/") ->
-                    handleApi(uri.removePrefix("/api"), method, session.parms, body)
+                    handleApi(uri.removePrefix("/api"), method, session.parms, body, filesMap)
 
                 else ->
                     // SPA-ish fallback
@@ -55,15 +55,14 @@ class LocalHttpServer(
         }
     }
 
-    private fun readBody(session: IHTTPSession): String {
+    private fun readBody(session: IHTTPSession, filesOut: MutableMap<String, String>): String {
         return try {
-            val files = HashMap<String, String>()
             if (session.method == Method.POST ||
                 session.method == Method.PUT ||
                 session.method == Method.PATCH
             ) {
-                session.parseBody(files)
-                files["postData"] ?: ""
+                session.parseBody(filesOut)
+                filesOut["postData"] ?: ""
             } else ""
         } catch (_: Exception) {
             ""
@@ -75,6 +74,7 @@ class LocalHttpServer(
         method: Method,
         query: Map<String, String>,
         body: String,
+        filesMap: Map<String, String> = emptyMap(),
     ): Response {
         val p = path.trimEnd('/').ifEmpty { "/" }
         val jsonBody = if (body.isNotBlank()) JSONObject(body) else JSONObject()
@@ -185,6 +185,7 @@ class LocalHttpServer(
                     jsonBody.getLong("channel_id"),
                     jsonBody.getLong("agent_id"),
                     jsonBody.getString("content"),
+                    jsonBody.optLongOrNull("parent_id"),
                 ),
                 Response.Status.CREATED
             )
@@ -253,6 +254,120 @@ class LocalHttpServer(
                 return json(runner.runTask(id))
             }
         }
+
+
+        // ---- settings test ----
+        if ((p == "/settings/test" || p == "/config/test") && method == Method.POST) {
+            return json(store.testLlmConnection())
+        }
+
+        // ---- agents status ----
+        if (p == "/agents/status" && method == Method.GET) {
+            return json(store.agentsStatus())
+        }
+
+        // ---- approvals ----
+        if (p == "/approvals" && method == Method.GET) {
+            val oid = query["organisation_id"]?.toLongOrNull()
+            val st = query["status"]
+            return json(store.listApprovals(oid, st))
+        }
+        if (p == "/approvals" && method == Method.POST) {
+            return json(
+                store.createApproval(
+                    orgId = jsonBody.getLong("organisation_id"),
+                    title = jsonBody.getString("title"),
+                    description = jsonBody.optNullableString("description"),
+                    requesterAgentId = jsonBody.optLongOrNull("requester_agent_id"),
+                    relatedTaskId = jsonBody.optLongOrNull("related_task_id"),
+                ),
+                Response.Status.CREATED
+            )
+        }
+        Regex("^/approvals/(\\d+)/approve$").matchEntire(p)?.let { m ->
+            if (method == Method.POST) {
+                return json(store.resolveApproval(m.groupValues[1].toLong(), true, jsonBody.optNullableString("decision_note")))
+            }
+        }
+        Regex("^/approvals/(\\d+)/reject$").matchEntire(p)?.let { m ->
+            if (method == Method.POST) {
+                return json(store.resolveApproval(m.groupValues[1].toLong(), false, jsonBody.optNullableString("decision_note")))
+            }
+        }
+
+        // ---- routines ----
+        if (p == "/routines" && method == Method.GET) {
+            val oid = query["organisation_id"]?.toLongOrNull()
+            return json(store.listRoutines(oid))
+        }
+        if (p == "/routines" && method == Method.POST) {
+            val every = if (jsonBody.has("every_seconds") && !jsonBody.isNull("every_seconds"))
+                jsonBody.getInt("every_seconds") else null
+            val cron = jsonBody.optNullableString("cron")
+            if (every == null && cron.isNullOrBlank()) throw ApiError(400, "Provide cron or every_seconds")
+            return json(
+                store.createRoutine(
+                    orgId = jsonBody.getLong("organisation_id"),
+                    name = jsonBody.getString("name"),
+                    prompt = jsonBody.getString("prompt"),
+                    cron = cron,
+                    everySeconds = every,
+                    targetAgentId = jsonBody.optLongOrNull("target_agent_id"),
+                    channelId = jsonBody.optLongOrNull("channel_id"),
+                    enabled = jsonBody.optBoolean("enabled", true),
+                ),
+                Response.Status.CREATED
+            )
+        }
+        Regex("^/routines/(\\d+)$").matchEntire(p)?.let { m ->
+            if (method == Method.DELETE) {
+                store.deleteRoutine(m.groupValues[1].toLong())
+                return newFixedLengthResponse(Response.Status.NO_CONTENT, "text/plain", "").also { addCors(it) }
+            }
+        }
+        Regex("^/routines/(\\d+)/run$").matchEntire(p)?.let { m ->
+            if (method == Method.POST) {
+                return json(store.fireRoutine(m.groupValues[1].toLong()))
+            }
+        }
+
+        // ---- connectors ----
+        if (p == "/connectors" && method == Method.GET) {
+            return json(store.listConnectors())
+        }
+        Regex("^/connectors/([^/]+)/enable$").matchEntire(p)?.let { m ->
+            if (method == Method.POST) {
+                return json(JSONObject().put("name", m.groupValues[1]).put("enabled", jsonBody.optBoolean("enabled", true)))
+            }
+        }
+        Regex("^/connectors/([^/]+)/invoke$").matchEntire(p)?.let { m ->
+            if (method == Method.POST) {
+                val payload = jsonBody.optJSONObject("payload") ?: JSONObject()
+                return json(store.invokeConnector(m.groupValues[1], payload))
+            }
+        }
+
+        // ---- files ----
+        if (p == "/files" && method == Method.GET) {
+            return json(store.listWorkspaceFiles())
+        }
+        if (p == "/files/upload" && method == Method.POST) {
+            val tmp = filesMap["file"]
+            if (!tmp.isNullOrBlank()) {
+                val f = java.io.File(tmp)
+                val name = query["filename"] ?: f.name.ifBlank { "upload.bin" }
+                return json(store.saveWorkspaceFile(name, f.readBytes()))
+            }
+            val name = jsonBody.optString("filename", "upload.bin")
+            val b64 = jsonBody.optString("content_base64", "")
+            if (b64.isNotBlank()) {
+                val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+                return json(store.saveWorkspaceFile(name, bytes))
+            }
+            val text = jsonBody.optString("content", "uploaded via Android")
+            return json(store.saveWorkspaceFile(name, text.toByteArray(Charsets.UTF_8)))
+        }
+
 
         throw ApiError(404, "Not found: $p")
     }

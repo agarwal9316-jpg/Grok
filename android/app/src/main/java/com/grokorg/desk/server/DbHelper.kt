@@ -44,6 +44,7 @@ class DbHelper(context: Context) :
               role TEXT NOT NULL,
               is_human INTEGER NOT NULL DEFAULT 0,
               system_prompt TEXT,
+              status TEXT NOT NULL DEFAULT 'idle',
               created_at TEXT NOT NULL,
               FOREIGN KEY(organisation_id) REFERENCES organisations(id) ON DELETE CASCADE,
               FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE SET NULL
@@ -69,6 +70,7 @@ class DbHelper(context: Context) :
               channel_id INTEGER NOT NULL,
               agent_id INTEGER NOT NULL,
               content TEXT NOT NULL,
+              parent_id INTEGER,
               created_at TEXT NOT NULL,
               FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE,
               FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE CASCADE
@@ -98,6 +100,41 @@ class DbHelper(context: Context) :
         )
         db.execSQL(
             """
+            CREATE TABLE approvals (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              organisation_id INTEGER NOT NULL,
+              requester_agent_id INTEGER,
+              title TEXT NOT NULL,
+              description TEXT,
+              status TEXT NOT NULL DEFAULT 'pending',
+              decision_note TEXT,
+              related_task_id INTEGER,
+              created_at TEXT NOT NULL,
+              resolved_at TEXT,
+              FOREIGN KEY(organisation_id) REFERENCES organisations(id) ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE routines (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              organisation_id INTEGER NOT NULL,
+              name TEXT NOT NULL,
+              prompt TEXT NOT NULL,
+              cron TEXT,
+              every_seconds INTEGER,
+              target_agent_id INTEGER,
+              channel_id INTEGER,
+              enabled INTEGER NOT NULL DEFAULT 1,
+              last_run_at TEXT,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(organisation_id) REFERENCES organisations(id) ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
             CREATE TABLE app_settings (
               key TEXT PRIMARY KEY,
               value TEXT NOT NULL
@@ -107,9 +144,10 @@ class DbHelper(context: Context) :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Fresh schema for v1.2 standalone — wipe and recreate
         db.execSQL("DROP TABLE IF EXISTS messages")
         db.execSQL("DROP TABLE IF EXISTS tasks")
+        db.execSQL("DROP TABLE IF EXISTS approvals")
+        db.execSQL("DROP TABLE IF EXISTS routines")
         db.execSQL("DROP TABLE IF EXISTS agents")
         db.execSQL("DROP TABLE IF EXISTS channels")
         db.execSQL("DROP TABLE IF EXISTS teams")
@@ -120,6 +158,6 @@ class DbHelper(context: Context) :
 
     companion object {
         const val DB_NAME = "grok_org_os.db"
-        const val DB_VERSION = 1
+        const val DB_VERSION = 2
     }
 }

@@ -9,13 +9,17 @@ import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.TimeZone
 
 /**
  * SQLite-backed store mirroring Python models + bootstrap.
  */
 class OrgStore(context: Context) {
-    private val dbHelper = DbHelper(context.applicationContext)
+    private val appContext = context.applicationContext
+    private val dbHelper = DbHelper(appContext)
     val llm = LlmClient()
 
     init {
@@ -64,6 +68,8 @@ class OrgStore(context: Context) {
             .put("database_url", "sqlite:///grok_org_os.db")
             .put("host", "127.0.0.1")
             .put("port", LocalBackend.DEFAULT_PORT)
+            .put("version", "2.0.0")
+            .put("workspace_dir", "workspace")
     }
 
     fun updateSettings(body: JSONObject): JSONObject {
@@ -198,7 +204,7 @@ class OrgStore(context: Context) {
     ) {
         cursorToJson(
             it, "id", "organisation_id", "team_id", "name", "role",
-            "is_human", "system_prompt", "created_at"
+            "is_human", "system_prompt", "status", "created_at"
         )
     }
 
@@ -229,7 +235,7 @@ class OrgStore(context: Context) {
     ) {
         cursorToJson(
             it, "id", "organisation_id", "team_id", "name", "role",
-            "is_human", "system_prompt", "created_at"
+            "is_human", "system_prompt", "status", "created_at"
         )
     }
 
@@ -243,7 +249,7 @@ class OrgStore(context: Context) {
                 list.add(
                     cursorToJson(
                         c, "id", "organisation_id", "team_id", "name", "role",
-                        "is_human", "system_prompt", "created_at"
+                        "is_human", "system_prompt", "status", "created_at"
                     )
                 )
             }
@@ -301,17 +307,18 @@ class OrgStore(context: Context) {
         val args = if (channelId != null) arrayOf(channelId.toString()) else null
         return queryList(sql, args) {
             cursorToJson(
-                it, "id", "channel_id", "agent_id", "content", "created_at",
+                it, "id", "channel_id", "agent_id", "content", "parent_id", "created_at",
                 "agent_name", "agent_role"
             )
         }
     }
 
-    fun createMessage(channelId: Long, agentId: Long, content: String): JSONObject {
+    fun createMessage(channelId: Long, agentId: Long, content: String, parentId: Long? = null): JSONObject {
         val cv = ContentValues().apply {
             put("channel_id", channelId)
             put("agent_id", agentId)
             put("content", content)
+            if (parentId != null) put("parent_id", parentId) else putNull("parent_id")
             put("created_at", nowIso())
         }
         val id = db().insertOrThrow("messages", null, cv)
@@ -324,7 +331,7 @@ class OrgStore(context: Context) {
             arrayOf(id.toString())
         ) {
             cursorToJson(
-                it, "id", "channel_id", "agent_id", "content", "created_at",
+                it, "id", "channel_id", "agent_id", "content", "parent_id", "created_at",
                 "agent_name", "agent_role"
             )
         }!!
@@ -490,4 +497,273 @@ class OrgStore(context: Context) {
     fun ensureBootstrapped() {
         if (orgCount() == 0) bootstrap()
     }
+
+    // ---- v2 agents status ----
+
+    fun agentsStatus(): JSONArray {
+        val arr = JSONArray()
+        db().rawQuery("SELECT id, name, role, is_human, COALESCE(status,'idle') FROM agents ORDER BY id", null).use { c ->
+            while (c.moveToNext()) {
+                arr.put(
+                    JSONObject()
+                        .put("id", c.getLong(0))
+                        .put("name", c.getString(1))
+                        .put("role", c.getString(2))
+                        .put("is_human", c.getInt(3) == 1)
+                        .put("status", c.getString(4) ?: "idle")
+                )
+            }
+        }
+        return arr
+    }
+
+    fun setAgentStatus(agentId: Long, status: String) {
+        val cv = ContentValues().apply { put("status", status) }
+        db().update("agents", cv, "id=?", arrayOf(agentId.toString()))
+    }
+
+    fun testLlmConnection(): JSONObject {
+        loadLlmSettings()
+        if (llm.useMock) {
+            return JSONObject().put("ok", true).put("mode", "mock").put("model", llm.model)
+                .put("message", "Mock LLM ready")
+        }
+        return try {
+            val reply = llm.chat(
+                listOf(mapOf("role" to "user", "content" to "Reply with exactly: pong")),
+                maxTokens = 16,
+            )
+            JSONObject().put("ok", true).put("mode", "live").put("model", llm.model)
+                .put("base_url", llm.baseUrl).put("message", reply.take(200))
+        } catch (e: Exception) {
+            JSONObject().put("ok", false).put("mode", "live").put("error", e.message ?: "error")
+        }
+    }
+
+    // ---- approvals ----
+
+    fun listApprovals(orgId: Long?, status: String? = null): JSONArray {
+        val clauses = mutableListOf<String>()
+        val args = mutableListOf<String>()
+        if (orgId != null) { clauses += "organisation_id=?"; args += orgId.toString() }
+        if (status != null) { clauses += "status=?"; args += status }
+        val where = if (clauses.isEmpty()) "" else "WHERE " + clauses.joinToString(" AND ")
+        return queryList("SELECT * FROM approvals $where ORDER BY id DESC", args.toTypedArray()) {
+            approvalFromCursor(it)
+        }
+    }
+
+    private fun approvalFromCursor(c: Cursor): JSONObject {
+        val o = cursorToJson(
+            c, "id", "organisation_id", "requester_agent_id", "title", "description",
+            "status", "decision_note", "related_task_id", "created_at", "resolved_at"
+        )
+        val req = o.optLongOrNull("requester_agent_id")
+        if (req != null) {
+            getAgent(req)?.let { o.put("requester_name", it.optString("name")) }
+        }
+        return o
+    }
+
+    fun createApproval(
+        orgId: Long,
+        title: String,
+        description: String?,
+        requesterAgentId: Long?,
+        relatedTaskId: Long?,
+    ): JSONObject {
+        val cv = ContentValues().apply {
+            put("organisation_id", orgId)
+            put("title", title)
+            put("description", description)
+            if (requesterAgentId != null) put("requester_agent_id", requesterAgentId) else putNull("requester_agent_id")
+            if (relatedTaskId != null) put("related_task_id", relatedTaskId) else putNull("related_task_id")
+            put("status", "pending")
+            put("created_at", nowIso())
+        }
+        val id = db().insertOrThrow("approvals", null, cv)
+        return queryOne("SELECT * FROM approvals WHERE id=?", arrayOf(id.toString())) { approvalFromCursor(it) }!!
+    }
+
+    fun resolveApproval(id: Long, approve: Boolean, note: String?): JSONObject {
+        val cv = ContentValues().apply {
+            put("status", if (approve) "approved" else "rejected")
+            put("decision_note", note ?: if (approve) "Approved by CEO" else "Rejected by CEO")
+            put("resolved_at", nowIso())
+        }
+        db().update("approvals", cv, "id=?", arrayOf(id.toString()))
+        val a = queryOne("SELECT * FROM approvals WHERE id=?", arrayOf(id.toString())) { approvalFromCursor(it) }!!
+        val req = a.optLongOrNull("requester_agent_id")
+        if (req != null) setAgentStatus(req, "idle")
+        val taskId = a.optLongOrNull("related_task_id")
+        if (taskId != null) {
+            if (approve) updateTask(taskId, mapOf("status" to "assigned"))
+            else updateTask(taskId, mapOf("status" to "failed", "result" to "Rejected: ${a.optString("decision_note")}"))
+        }
+        return a
+    }
+
+    // ---- routines ----
+
+    fun listRoutines(orgId: Long?): JSONArray {
+        val sql = if (orgId != null)
+            "SELECT * FROM routines WHERE organisation_id=? ORDER BY id"
+        else "SELECT * FROM routines ORDER BY id"
+        val args = if (orgId != null) arrayOf(orgId.toString()) else null
+        return queryList(sql, args) { routineFromCursor(it) }
+    }
+
+    private fun routineFromCursor(c: Cursor): JSONObject =
+        cursorToJson(
+            c, "id", "organisation_id", "name", "prompt", "cron", "every_seconds",
+            "target_agent_id", "channel_id", "enabled", "last_run_at", "created_at"
+        ).also {
+            val e = it.opt("enabled")
+            if (e is Int) it.put("enabled", e == 1)
+        }
+
+    fun createRoutine(
+        orgId: Long,
+        name: String,
+        prompt: String,
+        cron: String?,
+        everySeconds: Int?,
+        targetAgentId: Long?,
+        channelId: Long?,
+        enabled: Boolean = true,
+    ): JSONObject {
+        val cv = ContentValues().apply {
+            put("organisation_id", orgId)
+            put("name", name)
+            put("prompt", prompt)
+            put("cron", cron)
+            if (everySeconds != null) put("every_seconds", everySeconds) else putNull("every_seconds")
+            if (targetAgentId != null) put("target_agent_id", targetAgentId) else putNull("target_agent_id")
+            if (channelId != null) put("channel_id", channelId) else putNull("channel_id")
+            put("enabled", if (enabled) 1 else 0)
+            put("created_at", nowIso())
+        }
+        val id = db().insertOrThrow("routines", null, cv)
+        return queryOne("SELECT * FROM routines WHERE id=?", arrayOf(id.toString())) { routineFromCursor(it) }!!
+    }
+
+    fun deleteRoutine(id: Long) {
+        db().delete("routines", "id=?", arrayOf(id.toString()))
+    }
+
+    fun fireRoutine(id: Long): JSONObject {
+        val r = queryOne("SELECT * FROM routines WHERE id=?", arrayOf(id.toString())) { routineFromCursor(it) }
+            ?: throw ApiError(404, "Routine not found")
+        val orgId = r.getLong("organisation_id")
+        var agentId = r.optLongOrNull("target_agent_id")
+        var channelId = r.optLongOrNull("channel_id")
+        if (agentId == null) {
+            db().rawQuery(
+                "SELECT id FROM agents WHERE organisation_id=? AND is_human=0 ORDER BY id LIMIT 1",
+                arrayOf(orgId.toString())
+            ).use { c -> if (c.moveToFirst()) agentId = c.getLong(0) }
+        }
+        if (channelId == null) {
+            db().rawQuery(
+                "SELECT id FROM channels WHERE organisation_id=? ORDER BY id LIMIT 1",
+                arrayOf(orgId.toString())
+            ).use { c -> if (c.moveToFirst()) channelId = c.getLong(0) }
+        }
+        val aId = agentId
+        val cId = channelId
+        if (aId != null && cId != null) {
+            createMessage(cId, aId, "⏰ Routine '${r.getString("name")}' fired:\n${r.getString("prompt")}")
+            createTask(
+                orgId = orgId,
+                title = "[Routine] ${r.getString("name")}",
+                description = r.getString("prompt"),
+                status = "assigned",
+                assigneeId = aId,
+                channelId = cId,
+            )
+        }
+        val cv = ContentValues().apply { put("last_run_at", nowIso()) }
+        db().update("routines", cv, "id=?", arrayOf(id.toString()))
+        return queryOne("SELECT * FROM routines WHERE id=?", arrayOf(id.toString())) { routineFromCursor(it) }!!
+    }
+
+    // ---- files ----
+
+    fun workspaceDir(): File {
+        val dir = File(appContext.filesDir, "workspace")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    fun listWorkspaceFiles(): JSONObject {
+        val root = workspaceDir()
+        val entries = JSONArray()
+        root.listFiles()?.sortedBy { it.name }?.forEach { f ->
+            entries.put(
+                JSONObject()
+                    .put("name", f.name)
+                    .put("path", f.name)
+                    .put("type", if (f.isDirectory) "dir" else "file")
+                    .put("size", if (f.isFile) f.length() else JSONObject.NULL)
+            )
+        }
+        return JSONObject().put("path", ".").put("workspace", root.absolutePath).put("entries", entries)
+    }
+
+    fun saveWorkspaceFile(name: String, bytes: ByteArray): JSONObject {
+        val safe = File(name).name
+        val dest = File(workspaceDir(), safe)
+        dest.writeBytes(bytes)
+        return JSONObject().put("ok", true).put("path", safe).put("bytes", bytes.size)
+    }
+
+    // ---- connectors ----
+
+    fun listConnectors(): JSONArray {
+        val arr = JSONArray()
+        arr.put(
+            JSONObject().put("name", "files").put("label", "Files (workspace)")
+                .put("available", true).put("enabled", true).put("user_enabled", true)
+                .put("setup", "App filesDir/workspace")
+        )
+        arr.put(
+            JSONObject().put("name", "web").put("label", "Web (HTTP fetch)")
+                .put("available", true).put("enabled", true).put("user_enabled", true)
+                .put("setup", "No configuration required.")
+        )
+        arr.put(
+            JSONObject().put("name", "smtp_email").put("label", "Email (SMTP)")
+                .put("available", false).put("enabled", false).put("user_enabled", false)
+                .put("setup", "Configure SMTP on Python server; stub on Android.")
+        )
+        arr.put(
+            JSONObject().put("name", "rest").put("label", "Generic REST")
+                .put("available", true).put("enabled", true).put("user_enabled", true)
+                .put("setup", "POST invoke with url/method.")
+        )
+        return arr
+    }
+
+    fun invokeConnector(name: String, payload: JSONObject): JSONObject {
+        return when (name) {
+            "files" -> listWorkspaceFiles()
+            "web" -> {
+                val url = payload.optString("url", "https://example.com")
+                try {
+                    val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 15000
+                        readTimeout = 15000
+                    }
+                    val text = conn.inputStream.bufferedReader().use { it.readText() }
+                    JSONObject().put("status_code", conn.responseCode).put("url", url)
+                        .put("body", text.take(payload.optInt("max_chars", 400)))
+                } catch (e: Exception) {
+                    JSONObject().put("error", e.message ?: "fetch failed")
+                }
+            }
+            else -> JSONObject().put("ok", true).put("stub", true).put("name", name)
+        }
+    }
+
 }
+

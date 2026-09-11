@@ -17,6 +17,7 @@ def _to_read(msg: Message) -> MessageRead:
         channel_id=msg.channel_id,
         agent_id=msg.agent_id,
         content=msg.content,
+        parent_id=msg.parent_id,
         created_at=msg.created_at,
         agent_name=agent.name if agent else None,
         agent_role=agent.role if agent else None,
@@ -29,10 +30,13 @@ def create_message(payload: MessageCreate, db: Session = Depends(get_db)) -> Mes
         raise HTTPException(status_code=404, detail="Channel not found")
     if not db.get(Agent, payload.agent_id):
         raise HTTPException(status_code=404, detail="Agent not found")
+    if payload.parent_id is not None and not db.get(Message, payload.parent_id):
+        raise HTTPException(status_code=404, detail="Parent message not found")
     msg = Message(
         channel_id=payload.channel_id,
         agent_id=payload.agent_id,
         content=payload.content,
+        parent_id=payload.parent_id,
     )
     db.add(msg)
     db.commit()

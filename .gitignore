@@ -22,3 +22,6 @@ android/*.iml
 # Keep shipped APK under android/dist/
 !android/dist/
 !android/dist/*.apk
+workspace/
+workspace/*
+!workspace/README.md

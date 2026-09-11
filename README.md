@@ -1,20 +1,38 @@
-# Grok Org OS
+# Grok Org OS 2.0 — Full Power
 
-Portable multi-agent AI organization platform with a **full desk-style GUI**. The **Android APK is fully standalone** (on-device backend); PC launchers are for desktop use. Model an organisation with a human CEO, an AI Chief of Staff, specialist teams (Ops / Research / Comms), channels, messages, and tasks — then run collaboration end-to-end.
+Portable multi-agent AI organisation platform with **real OpenAI tool calling**, concurrent agent workers, connectors (files / web / email / REST), CEO approvals, workspace file drops, and scheduled routines.
 
-## Windows (double-click) — desktop / PC optional
+The **PC / Windows app is first-class** (double-click `Start.bat`). Android APK is a standalone on-device mirror of the same desk UI + API.
 
-**Requirement:** [Python 3.11+](https://www.python.org/downloads/) installed and on PATH  
-(check *“Add python.exe to PATH”* during install). No Docker or Node required.
+---
 
-1. Unzip / clone this folder anywhere.
+## Windows (double-click) — recommended
+
+**Requirement:** [Python 3.11+](https://www.python.org/downloads/) on PATH  
+(check *“Add python.exe to PATH”* during install).
+
+1. Unzip / clone this folder anywhere on your PC.
 2. Double-click **`Start.bat`** (or right-click **`Start.ps1`** → Run with PowerShell).
-3. A browser opens to **http://127.0.0.1:8000** with the desk GUI.
-4. To stop: close the console window, or run **`Stop.bat`**.
+3. Browser / desktop window opens **http://127.0.0.1:8000** — the full desk GUI.
+4. Click **⚙ OpenAI** → paste your `OPENAI_API_KEY`, optional base URL / model → **Test connection** → **Save**.
+5. Hit **Run Demo** — with a key set, agents use **live tool calls** (messages, tasks, web/files). Without a key, offline **mock** tool calling still demos the flow.
+6. Stop: close the console, or run **`Stop.bat`**.
 
-First launch creates `.venv`, installs dependencies, copies `.env.example` → `.env`, and auto-bootstraps a sample org if the database is empty.
+First launch creates `.venv`, installs deps (including APScheduler), copies `.env.example` → `.env`, creates `workspace/`, and bootstraps a sample org.
 
-Optional: open **Settings** in the GUI to set an OpenAI-compatible API key, base URL, and model (saved to `.env`). Leave the key empty to use the offline mock LLM.
+### Full power on Windows (OpenAI)
+
+| Setting | Default | Notes |
+|---------|---------|--------|
+| `OPENAI_API_KEY` | _(empty = mock)_ | Required for live LLM + real tools |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenRouter / Azure / Ollama compatible |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Any chat-completions model with tools |
+
+Also editable in the GUI **OpenAI** dialog (saved to `.env`).
+
+Optional connectors in `.env`: `SMTP_*`, `WEBHOOK_URL`, `REST_*`, `GOOGLE_*` (stubs activate when tokens present).
+
+---
 
 ## Mac / Linux
 
@@ -24,164 +42,102 @@ chmod +x start.sh
 # → http://127.0.0.1:8000
 ```
 
-Or manually:
+Or:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
+cp -n .env.example .env   # set OPENAI_API_KEY for live mode
 grok-org serve
 ```
 
-## What you get
+---
+
+## What you get (v2.0)
 
 | Surface | URL |
 |---------|-----|
-| **Desk GUI** (agents, HQ channel, tasks, settings) | http://127.0.0.1:8000/ |
+| **Desk GUI** | http://127.0.0.1:8000/ |
 | Swagger / OpenAPI | http://127.0.0.1:8000/docs |
 | Health | http://127.0.0.1:8000/health |
 
-GUI features:
+### Full power features
 
-- Sidebar of agents / teams (CEO, Chief of Staff, Ops, Research, Comms)
-- Channel / conversation view with live-ish polling
-- Task board (create, status, run)
-- Agent persona panels
-- **Run Demo** collaboration button
-- Settings for OpenAI-compatible API (base URL, key, model)
+1. **Real LLM + tool calling** — OpenAI Chat Completions with functions: `send_message`, `create_task`, `handoff_task`, `read_channel`, `list_agents`, `http_fetch`, `fs_list` / `fs_read` / `fs_write`, `request_approval`.
+2. **True multi-agent workers** — concurrent thread-pool workers + background poller; Chief of Staff orchestrates; specialists execute tools; CEO is human.
+3. **Connectors** — Files (workspace), Web (httpx), SMTP email, outbound webhook, generic REST, Google mail/calendar/chat stubs.
+4. **Richer desk UX** — threaded replies, approvals inbox, file drop, agent status (idle/thinking/tool), routines panel, OpenAI settings + Test connection.
+5. **Routines** — cron / interval scheduler (APScheduler), persisted in SQLite, fires while server runs.
+6. **Approvals** — agents pause via `request_approval`; CEO approves/rejects in UI.
 
-CLI extras:
+CLI:
 
 ```bash
-grok-org bootstrap          # sample org
-grok-org run-demo           # end-to-end collaboration (mock LLM ok)
-grok-org serve              # API + GUI (opens browser)
-grok-org desktop            # optional native window (pip install -e ".[desktop]")
+grok-org bootstrap
+grok-org run-demo
+grok-org serve
+grok-org desktop    # optional native window
 pytest -q
 ```
 
-Portable launchers at repo root: `Start.bat` / `Start.ps1` / `Stop.bat` (Windows) and `start.sh` (Mac/Linux). Copy the folder anywhere — it is the app.
+---
 
+## Android standalone
+
+APK under `android/dist/GrokOrgOS-2.0.0-debug.apk` — on-device NanoHTTPD backend + same desk UI. Set OpenAI key in in-app Settings. Rebuild:
+
+```bash
+cd android && ./build-apk.sh
+```
+
+---
 
 ## Docker (optional)
 
 ```bash
 docker compose up --build
-# http://localhost:8000/
 ```
+
+---
 
 ## Architecture
 
 ```mermaid
 flowchart TB
-  subgraph UI["Desk GUI /"]
-    sidebar[Agents / Teams]
-    channel[HQ Channel]
-    tasks_ui[Task Board]
-    settings[Settings]
-  end
-
-  subgraph CLI["CLI (grok-org)"]
-    bootstrap
-    serve
-    run_demo["run-demo"]
+  subgraph UI["Desk GUI"]
+    channel[Threaded channels]
+    tasks_ui[Tasks]
+    approvals[CEO approvals]
+    files[Workspace files]
+    routines[Routines]
+    connectors[Connectors]
+    openai[OpenAI settings]
   end
 
   subgraph API["FastAPI /api"]
-    orgs
-    teams
-    agents
-    channels
-    messages
-    tasks
-    system["settings / bootstrap / demo"]
+    runtime[Agent runtime + tools]
+    sched[APScheduler routines]
+    conn[Connector registry]
   end
 
-  subgraph Core["Core"]
-    TaskRunner
-    LLMClient["LLM Client\n(OpenAI-compatible / mock)"]
-    SQLite[(SQLite)]
+  subgraph LLM["OpenAI-compatible"]
+    chat[Chat Completions + tools]
   end
 
   UI --> API
-  CLI --> API
-  CLI --> TaskRunner
-  API --> SQLite
-  TaskRunner --> LLMClient
-  TaskRunner --> SQLite
-  tasks --> TaskRunner
+  runtime --> chat
+  runtime --> conn
+  sched --> runtime
 ```
 
-### Task flow
-
-1. A task is created and **assigned** (often to the Chief of Staff).
-2. CoS calls the LLM to **decompose** work, creates subtasks, and assigns specialists.
-3. Each specialist calls the LLM and **posts results** to the channel.
-4. CoS **synthesizes** an executive summary; status becomes `done`.
-5. **Handoff** moves a task to another agent (`handed_off` → `assigned`).
-
-Task statuses: `pending` → `assigned` → `in_progress` → (`handed_off`) → `done` | `failed`.
-
-## Environment variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OPENAI_API_KEY` | _(empty)_ | If unset, mock LLM responses are used |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible base URL |
-| `OPENAI_MODEL` | `gpt-4o-mini` | Model name for `/chat/completions` |
-| `DATABASE_URL` | `sqlite:///./grok_org_os.db` | SQLAlchemy URL |
-| `HOST` | `0.0.0.0` | Server bind host |
-| `PORT` | `8000` | Server bind port |
-
-Copy `.env.example` to `.env` and adjust as needed (or use the Settings panel).
-
-## API
-
-- OpenAPI JSON: `/openapi.json`
-- Swagger UI: `/docs`
-- Health: `/health`
-- Desk UI: `/`
-- CRUD under `/api/orgs`, `/api/teams`, `/api/agents`, `/api/channels`, `/api/messages`, `/api/tasks`
-- Task actions: `POST /api/tasks/{id}/assign`, `/handoff`, `/run`
-- System: `GET/PUT /api/settings`, `POST /api/bootstrap`, `POST /api/demo`
-
-
-## Android APK (standalone)
-
-A Kotlin app in `android/` (`com.grokorg.desk` **v1.2.0**) runs the **full Grok Org OS on the phone** — embedded local HTTP backend + SQLite + desk GUI. **No PC required.**
-
-PC `Start.bat` / `start.sh` remain optional for desktop use only.
-
-### Install the APK
-
-1. Build (or download a release asset):
+## Tests
 
 ```bash
-cd android
-./build-apk.sh
-# → android/dist/GrokOrgOS-1.2.0-debug.apk
+pip install -e ".[dev]"
+pytest -q
 ```
 
-2. Copy the APK to your phone and open it (enable “Install unknown apps” for your file manager / browser).
-3. Or with USB debugging: `adb install -r android/dist/GrokOrgOS-1.2.0-debug.apk`
-
-### Use on the phone
-
-1. Open **Grok Org OS** → tap **Open Desk**.
-2. The WebView loads `http://127.0.0.1:<port>/` served by the in-app backend.
-3. **Run Demo** works offline with the mock LLM.
-4. In the desk **⚙ Settings**, optionally paste an OpenAI-compatible API key for live models.
-5. App **Settings** default is **On-device (standalone)**; advanced users can override with a remote server URL (e.g. PC running `Start.bat`).
-
-### In-app updates
-
-- Menu / home: **Check for updates**
-- Calls GitHub Releases: `https://api.github.com/repos/agarwal9316-jpg/Grok/releases/latest`
-- Compares `tag_name` to the app `versionName`; if newer, shows release notes and **Download update** (APK asset URL or release page).
-- Optional **Auto-check updates on launch** toggle in Settings.
-
-### Build with Android Studio
-
-Open the `android/` folder in Android Studio (Giraffe+), sync Gradle, Run on a device/emulator. SDK 34 / JDK 17+.
+Covers tool calling (mocked OpenAI HTTP), multi-agent demo, approval flow, routine CRUD/fire, file upload, connectors, threaded replies.
 
 ## License
 

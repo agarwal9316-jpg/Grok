@@ -1,4 +1,4 @@
-"""Task runner: CoS decompose/assign, specialist LLM work, handoffs."""
+"""Task runner: CoS + specialists via tool-calling agent runtime (with legacy fallback)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from grok_org_os.llm import LLMClient, get_llm_client
 from grok_org_os.models import Agent, AgentRole, Channel, Message, Task, TaskStatus
+from grok_org_os.runtime import get_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -75,11 +76,20 @@ class TaskRunner:
         if assignee.is_human:
             return task
 
+        # Prefer tool-calling multi-agent runtime (works with live OpenAI + mock tools)
+        try:
+            runtime = get_runtime()
+            runtime.llm = self.llm
+            return runtime.run_agent_on_task(self.db, task, assignee)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Runtime tool path failed (%s); legacy fallback", exc)
+            return self._legacy_run(task, assignee)
+
+    def _legacy_run(self, task: Task, assignee: Agent) -> Task:
         task.status = TaskStatus.in_progress
         self.db.add(task)
         self.db.commit()
         self.db.refresh(task)
-
         try:
             if assignee.role == AgentRole.chief_of_staff:
                 return self._run_chief_of_staff(task, assignee)
@@ -89,7 +99,7 @@ class TaskRunner:
                 return self._run_ceo_ack(task, assignee)
             return task
         except Exception as exc:  # noqa: BLE001
-            logger.exception("Task %s failed", task_id)
+            logger.exception("Task %s failed", task.id)
             task.status = TaskStatus.failed
             task.result = str(exc)
             self.db.add(task)
@@ -102,7 +112,6 @@ class TaskRunner:
             return task
 
     def run_pending_for_org(self, organisation_id: int, max_steps: int = 20) -> list[Task]:
-        """Process assigned AI tasks until idle or max_steps."""
         processed: list[Task] = []
         for _ in range(max_steps):
             tasks = (
@@ -121,8 +130,20 @@ class TaskRunner:
                 processed.append(result)
         return processed
 
-    def post_message(self, channel: Channel, agent: Agent, content: str) -> Message:
-        msg = Message(channel_id=channel.id, agent_id=agent.id, content=content)
+    def post_message(
+        self,
+        channel: Channel,
+        agent: Agent,
+        content: str,
+        *,
+        parent_id: int | None = None,
+    ) -> Message:
+        msg = Message(
+            channel_id=channel.id,
+            agent_id=agent.id,
+            content=content,
+            parent_id=parent_id,
+        )
         self.db.add(msg)
         self.db.commit()
         self.db.refresh(msg)

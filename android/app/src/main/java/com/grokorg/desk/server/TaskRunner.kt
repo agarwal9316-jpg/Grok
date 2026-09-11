@@ -262,6 +262,8 @@ class TaskRunner(private val store: OrgStore) {
         return JSONObject()
             .put("task", result)
             .put("message_count", msgCount)
+            .put("used_tools", true)
+            .put("mode", if (llm.useMock) "mock" else "live")
             .put("channel", channel)
     }
 

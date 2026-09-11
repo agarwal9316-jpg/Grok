@@ -10,6 +10,7 @@ from grok_org_os.api.app import create_app
 from grok_org_os.api.deps import get_db
 from grok_org_os.db import Base, init_db
 from grok_org_os.llm import LLMClient, set_llm_client
+from grok_org_os.runtime import AgentRuntime, set_runtime
 
 
 @pytest.fixture()
@@ -34,8 +35,10 @@ def db(db_engine):
 def mock_llm():
     client = LLMClient(api_key="")  # force mock
     set_llm_client(client)
+    set_runtime(AgentRuntime(llm=client))
     yield client
     set_llm_client(None)
+    set_runtime(None)
 
 
 @pytest.fixture()

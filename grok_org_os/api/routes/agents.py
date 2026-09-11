@@ -40,6 +40,13 @@ def list_agents(
     return q.order_by(Agent.id).all()
 
 
+
+@router.get("/status")
+def agents_runtime_status(db: Session = Depends(get_db)) -> list[dict]:
+    from grok_org_os.runtime import get_runtime
+    return get_runtime().all_statuses(db)
+
+
 @router.get("/{agent_id}", response_model=AgentRead)
 def get_agent(agent_id: int, db: Session = Depends(get_db)) -> Agent:
     agent = db.get(Agent, agent_id)

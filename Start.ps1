@@ -3,9 +3,9 @@ $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
 
 Write-Host "========================================"
-Write-Host "  Grok Org OS — portable desk GUI"
+Write-Host "  Grok Org OS 2.0 — Full Power Desk"
 Write-Host "========================================"
-Write-Host "This folder is the portable app — copy it anywhere."
+Write-Host "Portable Windows app. Set OPENAI_API_KEY in .env or GUI for live tool calling."
 Write-Host ""
 
 $py = Get-Command python -ErrorAction SilentlyContinue

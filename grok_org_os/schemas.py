@@ -7,7 +7,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from grok_org_os.models import AgentRole, TaskStatus
+from grok_org_os.models import AgentRole, ApprovalStatus, TaskStatus
 
 
 class ORMModel(BaseModel):
@@ -68,6 +68,7 @@ class AgentUpdate(BaseModel):
     team_id: Optional[int] = None
     is_human: Optional[bool] = None
     system_prompt: Optional[str] = None
+    status: Optional[str] = None
 
 
 class AgentRead(ORMModel):
@@ -78,6 +79,7 @@ class AgentRead(ORMModel):
     role: AgentRole
     is_human: bool
     system_prompt: Optional[str] = None
+    status: Optional[str] = "idle"
     created_at: datetime
 
 
@@ -106,6 +108,7 @@ class MessageCreate(BaseModel):
     channel_id: int
     agent_id: int
     content: str = Field(..., min_length=1)
+    parent_id: Optional[int] = None
 
 
 class MessageRead(ORMModel):
@@ -113,6 +116,7 @@ class MessageRead(ORMModel):
     channel_id: int
     agent_id: int
     content: str
+    parent_id: Optional[int] = None
     created_at: datetime
     agent_name: Optional[str] = None
     agent_role: Optional[AgentRole] = None
@@ -161,3 +165,75 @@ class TaskAssign(BaseModel):
 class TaskHandoff(BaseModel):
     to_agent_id: int
     note: Optional[str] = None
+
+
+# --- Approvals ---
+class ApprovalCreate(BaseModel):
+    organisation_id: int
+    title: str = Field(..., min_length=1, max_length=300)
+    description: Optional[str] = None
+    requester_agent_id: Optional[int] = None
+    related_task_id: Optional[int] = None
+
+
+class ApprovalDecision(BaseModel):
+    decision_note: Optional[str] = None
+
+
+class ApprovalRead(ORMModel):
+    id: int
+    organisation_id: int
+    requester_agent_id: Optional[int] = None
+    title: str
+    description: Optional[str] = None
+    status: ApprovalStatus
+    decision_note: Optional[str] = None
+    related_task_id: Optional[int] = None
+    created_at: datetime
+    resolved_at: Optional[datetime] = None
+    requester_name: Optional[str] = None
+
+
+# --- Routines ---
+class RoutineCreate(BaseModel):
+    organisation_id: int
+    name: str = Field(..., min_length=1, max_length=200)
+    prompt: str = Field(..., min_length=1)
+    cron: Optional[str] = None
+    every_seconds: Optional[int] = Field(None, ge=5)
+    target_agent_id: Optional[int] = None
+    channel_id: Optional[int] = None
+    enabled: bool = True
+
+
+class RoutineUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
+    prompt: Optional[str] = None
+    cron: Optional[str] = None
+    every_seconds: Optional[int] = Field(None, ge=5)
+    target_agent_id: Optional[int] = None
+    channel_id: Optional[int] = None
+    enabled: Optional[bool] = None
+
+
+class RoutineRead(ORMModel):
+    id: int
+    organisation_id: int
+    name: str
+    prompt: str
+    cron: Optional[str] = None
+    every_seconds: Optional[int] = None
+    target_agent_id: Optional[int] = None
+    channel_id: Optional[int] = None
+    enabled: bool
+    last_run_at: Optional[datetime] = None
+    created_at: datetime
+
+
+# --- Connectors ---
+class ConnectorEnable(BaseModel):
+    enabled: bool = True
+
+
+class ConnectorInvoke(BaseModel):
+    payload: dict = Field(default_factory=dict)

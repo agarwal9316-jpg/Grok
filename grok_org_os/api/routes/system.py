@@ -1,4 +1,4 @@
-"""System routes: settings/config, bootstrap, demo."""
+"""System routes: settings/config, bootstrap, demo, test LLM, agent status."""
 
 from __future__ import annotations
 
@@ -35,12 +35,20 @@ class ConfigRead(BaseModel):
     database_url: str
     host: str
     port: int
+    version: str = "2.0.0"
+    workspace_dir: str = "workspace"
 
 
 class SettingsUpdate(BaseModel):
     openai_api_key: Optional[str] = None
     openai_base_url: Optional[str] = Field(None, min_length=1)
     openai_model: Optional[str] = Field(None, min_length=1)
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = None
+    smtp_user: Optional[str] = None
+    smtp_password: Optional[str] = None
+    smtp_from: Optional[str] = None
+    webhook_url: Optional[str] = None
 
 
 class BootstrapRequest(BaseModel):
@@ -66,6 +74,8 @@ class DemoResponse(BaseModel):
     task: TaskRead
     message_count: int
     channel: ChannelRead
+    used_tools: bool = True
+    mode: str = "mock"
 
 
 def _read_env_file() -> dict[str, str]:
@@ -94,12 +104,28 @@ def _write_env_file(updates: dict[str, str]) -> None:
         f"DATABASE_URL={existing.get('DATABASE_URL', 'sqlite:///./grok_org_os.db')}",
         f"HOST={existing.get('HOST', '0.0.0.0')}",
         f"PORT={existing.get('PORT', '8000')}",
+        f"WORKSPACE_DIR={existing.get('WORKSPACE_DIR', 'workspace')}",
+        "",
+        "# Connectors (optional)",
+        f"SMTP_HOST={existing.get('SMTP_HOST', '')}",
+        f"SMTP_PORT={existing.get('SMTP_PORT', '587')}",
+        f"SMTP_USER={existing.get('SMTP_USER', '')}",
+        f"SMTP_PASSWORD={existing.get('SMTP_PASSWORD', '')}",
+        f"SMTP_FROM={existing.get('SMTP_FROM', '')}",
+        f"WEBHOOK_URL={existing.get('WEBHOOK_URL', '')}",
+        f"REST_BASE_URL={existing.get('REST_BASE_URL', '')}",
+        f"REST_API_TOKEN={existing.get('REST_API_TOKEN', '')}",
+        f"GOOGLE_CLIENT_ID={existing.get('GOOGLE_CLIENT_ID', '')}",
+        f"GOOGLE_CLIENT_SECRET={existing.get('GOOGLE_CLIENT_SECRET', '')}",
+        f"GOOGLE_REFRESH_TOKEN={existing.get('GOOGLE_REFRESH_TOKEN', '')}",
         "",
     ]
     ENV_PATH.write_text("\n".join(lines), encoding="utf-8")
 
 
 def _config_read() -> ConfigRead:
+    from grok_org_os import __version__
+
     s = get_settings()
     return ConfigRead(
         openai_base_url=s.openai_base_url,
@@ -110,6 +136,8 @@ def _config_read() -> ConfigRead:
         database_url=s.database_url,
         host=s.host,
         port=s.port,
+        version=__version__,
+        workspace_dir=s.workspace_dir,
     )
 
 
@@ -129,6 +157,18 @@ def update_app_settings(payload: SettingsUpdate) -> ConfigRead:
         updates["OPENAI_BASE_URL"] = payload.openai_base_url
     if payload.openai_model is not None:
         updates["OPENAI_MODEL"] = payload.openai_model
+    if payload.smtp_host is not None:
+        updates["SMTP_HOST"] = payload.smtp_host
+    if payload.smtp_port is not None:
+        updates["SMTP_PORT"] = str(payload.smtp_port)
+    if payload.smtp_user is not None:
+        updates["SMTP_USER"] = payload.smtp_user
+    if payload.smtp_password is not None:
+        updates["SMTP_PASSWORD"] = payload.smtp_password
+    if payload.smtp_from is not None:
+        updates["SMTP_FROM"] = payload.smtp_from
+    if payload.webhook_url is not None:
+        updates["WEBHOOK_URL"] = payload.webhook_url
     if not updates:
         raise HTTPException(status_code=400, detail="No settings to update")
     _write_env_file(updates)
@@ -139,6 +179,13 @@ def update_app_settings(payload: SettingsUpdate) -> ConfigRead:
         os.environ[k] = v
     set_llm_client(None)
     return _config_read()
+
+
+@router.post("/settings/test")
+@router.post("/config/test")
+def test_llm_connection() -> dict:
+    client = LLMClient()
+    return client.test_connection()
 
 
 @router.post("/bootstrap", response_model=BootstrapResponse)
@@ -164,8 +211,9 @@ def run_demo(
     payload: DemoRequest = DemoRequest(),
     db: Session = Depends(get_db),
 ) -> DemoResponse:
-    """Create a task, assign to Chief of Staff, run collaboration."""
+    """Create a task, assign to Chief of Staff, run tool-calling collaboration."""
     set_llm_client(LLMClient())
+    llm = LLMClient()
     data = bootstrap_sample_org(db, name=payload.org_name or "Grok Demo Org")
     org = data["organisation"]
     cos = data["agents"]["chief_of_staff"]
@@ -174,7 +222,7 @@ def run_demo(
 
     from grok_org_os.task_runner import TaskRunner
 
-    runner = TaskRunner(db)
+    runner = TaskRunner(db, llm=llm)
     runner.post_message(
         channel,
         ceo,
@@ -198,4 +246,6 @@ def run_demo(
         task=TaskRead.model_validate(result),
         message_count=msg_count,
         channel=ChannelRead.model_validate(channel),
+        used_tools=True,
+        mode="live" if not llm.use_mock else "mock",
     )
