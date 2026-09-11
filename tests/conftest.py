@@ -57,3 +57,30 @@ def client(db_engine, mock_llm):
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def autouse_reset_llm_env(monkeypatch, tmp_path, request):
+    """Keep settings/API key isolated: point .env at a temp file and clear key."""
+    import os
+    from grok_org_os.api.routes import system as system_routes
+    from grok_org_os.config import reset_settings_cache
+    from grok_org_os.llm import set_llm_client
+
+    env_file = tmp_path / "test.env"
+    env_file.write_text(
+        "OPENAI_API_KEY=\nOPENAI_BASE_URL=https://api.openai.com/v1\nOPENAI_MODEL=gpt-4o-mini\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(system_routes, "ENV_PATH", env_file)
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-mini")
+    # Also clear any process env pollution from prior runs
+    for k in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL"):
+        os.environ[k] = os.environ.get(k, "")
+    reset_settings_cache()
+    set_llm_client(None)
+    yield
+    reset_settings_cache()
+    set_llm_client(None)

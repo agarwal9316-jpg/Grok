@@ -50,9 +50,37 @@ class OrgStore(context: Context) {
         db().insertWithOnConflict("app_settings", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
     }
 
+    fun normalizeBaseUrl(url: String): String {
+        var u = url.trim().trimEnd('/')
+        if (u.isBlank()) return "https://api.openai.com/v1"
+        val lower = u.lowercase()
+        if (lower.endsWith("/v1") || lower.contains("/v1/") || lower.endsWith("/v1beta") || lower.contains("/openai/deployments")) {
+            return u
+        }
+        val markers = listOf(
+            "api.openai.com",
+            "openrouter.ai/api",
+            "api.groq.com/openai",
+            "api.together.xyz",
+            "api.fireworks.ai/inference",
+        )
+        for (h in markers) {
+            if (lower.endsWith(h) || lower.contains("://$h")) {
+                return "$u/v1"
+            }
+        }
+        try {
+            val parsed = URL(if ("://" in u) u else "https://$u")
+            val path = (parsed.path ?: "").trimEnd('/')
+            if (path.isEmpty() || path == "/api") return "$u/v1"
+        } catch (_: Exception) {
+        }
+        return u
+    }
+
     fun loadLlmSettings() {
         llm.apiKey = getSetting("openai_api_key", "")
-        llm.baseUrl = getSetting("openai_base_url", "https://api.openai.com/v1")
+        llm.baseUrl = normalizeBaseUrl(getSetting("openai_base_url", "https://api.openai.com/v1"))
         llm.model = getSetting("openai_model", "gpt-4o-mini")
     }
 
@@ -68,7 +96,7 @@ class OrgStore(context: Context) {
             .put("database_url", "sqlite:///grok_org_os.db")
             .put("host", "127.0.0.1")
             .put("port", LocalBackend.DEFAULT_PORT)
-            .put("version", "2.0.0")
+            .put("version", "2.1.0")
             .put("workspace_dir", "workspace")
     }
 
@@ -77,7 +105,7 @@ class OrgStore(context: Context) {
             setSetting("openai_api_key", body.getString("openai_api_key"))
         }
         if (body.has("openai_base_url") && !body.isNull("openai_base_url")) {
-            val v = body.getString("openai_base_url").trim()
+            val v = normalizeBaseUrl(body.getString("openai_base_url"))
             if (v.isNotEmpty()) setSetting("openai_base_url", v)
         }
         if (body.has("openai_model") && !body.isNull("openai_model")) {
@@ -529,14 +557,145 @@ class OrgStore(context: Context) {
                 .put("message", "Mock LLM ready")
         }
         return try {
-            val reply = llm.chat(
-                listOf(mapOf("role" to "user", "content" to "Reply with exactly: pong")),
-                maxTokens = 16,
-            )
-            JSONObject().put("ok", true).put("mode", "live").put("model", llm.model)
-                .put("base_url", llm.baseUrl).put("message", reply.take(200))
+            val base = normalizeBaseUrl(llm.baseUrl)
+            llm.baseUrl = base
+            val url = URL("${base.trimEnd('/')}/chat/completions")
+            val payload = JSONObject().apply {
+                put("model", llm.model)
+                put("temperature", 0)
+                put("max_tokens", 16)
+                put("messages", JSONArray().put(
+                    JSONObject().put("role", "user").put("content", "Reply with exactly: pong")
+                ))
+            }
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 30_000
+                readTimeout = 30_000
+                doOutput = true
+                setRequestProperty("Authorization", "Bearer ${llm.apiKey}")
+                setRequestProperty("Content-Type", "application/json")
+            }
+            conn.outputStream.bufferedWriter().use { it.write(payload.toString()) }
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val textBody = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            when {
+                code == 401 -> JSONObject()
+                    .put("ok", false).put("mode", "live").put("model", llm.model)
+                    .put("base_url", base)
+                    .put("error", "401 Unauthorized — API key rejected. Check key and provider.")
+                    .put("status_code", 401)
+                code == 404 -> JSONObject()
+                    .put("ok", false).put("mode", "live").put("model", llm.model)
+                    .put("base_url", base)
+                    .put("error", "404 Not Found at $url. Check base URL (often needs /v1; no trailing slash).")
+                    .put("status_code", 404)
+                code !in 200..299 -> JSONObject()
+                    .put("ok", false).put("mode", "live").put("model", llm.model)
+                    .put("base_url", base)
+                    .put("error", "HTTP $code: ${textBody.take(400)}")
+                    .put("status_code", code)
+                else -> {
+                    val msg = JSONObject(textBody)
+                        .getJSONArray("choices").getJSONObject(0)
+                        .getJSONObject("message").optString("content", "")
+                    JSONObject().put("ok", true).put("mode", "live").put("model", llm.model)
+                        .put("base_url", base).put("message", msg.take(200))
+                }
+            }
         } catch (e: Exception) {
-            JSONObject().put("ok", false).put("mode", "live").put("error", e.message ?: "error")
+            JSONObject().put("ok", false).put("mode", "live").put("model", llm.model)
+                .put("base_url", llm.baseUrl)
+                .put("error", "Connection failed: ${e.message ?: "error"}")
+        }
+    }
+
+
+    fun listModels(): JSONObject {
+        loadLlmSettings()
+        if (llm.useMock) {
+            val models = JSONArray()
+            listOf(
+                "gpt-4o-mini" to "openai",
+                "gpt-4o" to "openai",
+                "gpt-4.1-mini" to "openai",
+                "gpt-4.1" to "openai",
+                "o3-mini" to "openai",
+                "claude-3.5-sonnet" to "anthropic",
+            ).forEach { (id, owned) ->
+                models.put(JSONObject().put("id", id).put("owned_by", owned))
+            }
+            return JSONObject()
+                .put("ok", true)
+                .put("mode", "mock")
+                .put("base_url", llm.baseUrl)
+                .put("note", "No API key set — showing curated mock models. Add a key to fetch from the provider.")
+                .put("models", models)
+                .put("data", models)
+        }
+        return try {
+            val base = normalizeBaseUrl(llm.baseUrl)
+            llm.baseUrl = base
+            val url = URL("${base.trimEnd('/')}/models")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 30_000
+                readTimeout = 30_000
+                setRequestProperty("Authorization", "Bearer ${llm.apiKey}")
+            }
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val textBody = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (code == 401) {
+                return JSONObject()
+                    .put("ok", false).put("mode", "live").put("base_url", base)
+                    .put("error", "401 Unauthorized — check API key")
+                    .put("status_code", 401)
+                    .put("models", JSONArray()).put("data", JSONArray())
+            }
+            if (code == 404) {
+                return JSONObject()
+                    .put("ok", false).put("mode", "live").put("base_url", base)
+                    .put("error", "404 Not Found at $url. Check base URL (try with /v1; trailing slash is stripped).")
+                    .put("status_code", 404)
+                    .put("models", JSONArray()).put("data", JSONArray())
+            }
+            if (code !in 200..299) {
+                return JSONObject()
+                    .put("ok", false).put("mode", "live").put("base_url", base)
+                    .put("error", "HTTP $code: ${textBody.take(300)}")
+                    .put("status_code", code)
+                    .put("models", JSONArray()).put("data", JSONArray())
+            }
+            val payload = JSONObject(textBody)
+            val raw = payload.optJSONArray("data") ?: JSONArray()
+            val sorted = mutableListOf<JSONObject>()
+            for (i in 0 until raw.length()) {
+                val item = raw.opt(i)
+                when (item) {
+                    is JSONObject -> {
+                        val id = item.optString("id", "")
+                        if (id.isNotBlank()) {
+                            sorted += JSONObject()
+                                .put("id", id)
+                                .put("owned_by", item.optString("owned_by", item.optString("ownedBy", "")))
+                        }
+                    }
+                    is String -> sorted += JSONObject().put("id", item).put("owned_by", "")
+                }
+            }
+            sorted.sortBy { it.getString("id").lowercase() }
+            val out = JSONArray()
+            sorted.forEach { out.put(it) }
+            JSONObject()
+                .put("ok", true).put("mode", "live").put("base_url", base)
+                .put("models", out).put("data", out).put("count", out.length())
+        } catch (e: Exception) {
+            JSONObject()
+                .put("ok", false).put("mode", "live").put("base_url", llm.baseUrl)
+                .put("error", e.message ?: "error")
+                .put("models", JSONArray()).put("data", JSONArray())
         }
     }
 

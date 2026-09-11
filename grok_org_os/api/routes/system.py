@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from grok_org_os.api.deps import get_db
 from grok_org_os.bootstrap import bootstrap_sample_org
 from grok_org_os.config import get_settings, reset_settings_cache
-from grok_org_os.llm import LLMClient, set_llm_client
+from grok_org_os.llm import LLMClient, normalize_base_url, set_llm_client
 from grok_org_os.models import Message, Task, TaskStatus
 from grok_org_os.schemas import (
     AgentRead,
@@ -35,7 +35,7 @@ class ConfigRead(BaseModel):
     database_url: str
     host: str
     port: int
-    version: str = "2.0.0"
+    version: str = "2.1.0"
     workspace_dir: str = "workspace"
 
 
@@ -154,7 +154,7 @@ def update_app_settings(payload: SettingsUpdate) -> ConfigRead:
     if payload.openai_api_key is not None:
         updates["OPENAI_API_KEY"] = payload.openai_api_key
     if payload.openai_base_url is not None:
-        updates["OPENAI_BASE_URL"] = payload.openai_base_url
+        updates["OPENAI_BASE_URL"] = normalize_base_url(payload.openai_base_url)
     if payload.openai_model is not None:
         updates["OPENAI_MODEL"] = payload.openai_model
     if payload.smtp_host is not None:
@@ -179,6 +179,15 @@ def update_app_settings(payload: SettingsUpdate) -> ConfigRead:
         os.environ[k] = v
     set_llm_client(None)
     return _config_read()
+
+
+
+@router.get("/models")
+@router.post("/models")
+def list_provider_models() -> dict:
+    """List models from {openai_base_url}/models (Bearer key) or curated mock list."""
+    client = LLMClient()
+    return client.list_models()
 
 
 @router.post("/settings/test")

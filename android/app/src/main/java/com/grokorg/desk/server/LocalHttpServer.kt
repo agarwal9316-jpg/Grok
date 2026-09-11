@@ -31,7 +31,7 @@ class LocalHttpServer(
 
             when {
                 uri == "/health" && method == Method.GET ->
-                    json(JSONObject().put("status", "ok").put("version", "2.0.0"))
+                    json(JSONObject().put("status", "ok").put("version", "2.1.0"))
 
                 uri == "/" && method == Method.GET ->
                     asset("www/index.html", "text/html")
@@ -255,6 +255,12 @@ class LocalHttpServer(
             }
         }
 
+
+
+        // ---- models ----
+        if (p == "/models" && (method == Method.GET || method == Method.POST)) {
+            return json(store.listModels())
+        }
 
         // ---- settings test ----
         if ((p == "/settings/test" || p == "/config/test") && method == Method.POST) {

@@ -1,4 +1,4 @@
-# Grok Org OS Android 2.0.0
+# Grok Org OS Android 2.1.0
 
 Fully **standalone** APK: on-device NanoHTTPD backend + desk WebView UI.
 
@@ -13,7 +13,7 @@ Fully **standalone** APK: on-device NanoHTTPD backend + desk WebView UI.
 
 ```bash
 ./build-apk.sh
-# → dist/GrokOrgOS-2.0.0-debug.apk
+# → dist/GrokOrgOS-2.1.0-debug.apk
 ```
 
 Requires Android SDK + JDK 17+.

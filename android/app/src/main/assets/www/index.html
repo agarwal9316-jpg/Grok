@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Grok Org OS 2.0</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Grok Org OS 2.1</title>
   <link rel="stylesheet" href="/static/css/app.css" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231a1a2e'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-size='16' fill='%237c9cff'%3EG%3C/text%3E%3C/svg%3E" />
 </head>
@@ -11,27 +11,44 @@
   <div id="app">
     <header class="topbar">
       <div class="brand">
+        <button type="button" id="btn-sidebar-toggle" class="btn btn-ghost btn-icon mobile-only" title="Menu" aria-label="Toggle sidebar">☰</button>
         <span class="logo">G</span>
-        <div>
-          <strong>Grok Org OS <span class="ver">2.0</span></strong>
+        <div class="brand-text">
+          <strong>Grok Org OS <span class="ver">2.1</span></strong>
           <span class="muted" id="llm-badge">Mock LLM</span>
         </div>
       </div>
       <div class="top-actions">
-        <span class="muted" style="margin-right:0.35rem"><span class="status-dot"></span>Desk</span>
+        <label class="model-picker-wrap" title="Active model">
+          <span class="sr-only">Model</span>
+          <select id="model-picker" aria-label="Select model">
+            <option value="gpt-4o-mini">gpt-4o-mini</option>
+          </select>
+        </label>
         <button id="btn-bootstrap" class="btn" title="Create sample org">Bootstrap</button>
         <button id="btn-demo" class="btn btn-primary" title="Run end-to-end demo">Run Demo</button>
-        <button id="btn-connectors" class="btn btn-ghost" title="Connectors">🔌 Connectors</button>
-        <button id="btn-routines" class="btn btn-ghost" title="Routines">⏰ Routines</button>
-        <button id="btn-approvals" class="btn btn-ghost" title="Approvals">✅ Approvals <span id="approval-badge" class="count-badge hidden">0</span></button>
-        <button id="btn-files" class="btn btn-ghost" title="Files">📁 Files</button>
         <button id="btn-settings" class="btn btn-ghost" title="OpenAI Settings">⚙ OpenAI</button>
-        <a class="btn btn-ghost" href="/docs" target="_blank" rel="noopener">API Docs</a>
+        <div class="more-menu">
+          <button type="button" id="btn-more" class="btn btn-ghost" aria-haspopup="true" aria-expanded="false">More ▾</button>
+          <div id="more-dropdown" class="more-dropdown hidden" role="menu">
+            <button type="button" id="btn-connectors" class="menu-item" role="menuitem">🔌 Connectors</button>
+            <button type="button" id="btn-routines" class="menu-item" role="menuitem">⏰ Routines</button>
+            <button type="button" id="btn-approvals" class="menu-item" role="menuitem">✅ Approvals <span id="approval-badge" class="count-badge hidden">0</span></button>
+            <button type="button" id="btn-files" class="menu-item" role="menuitem">📁 Files</button>
+            <a class="menu-item" href="/docs" target="_blank" rel="noopener">API Docs</a>
+          </div>
+        </div>
       </div>
     </header>
 
-    <main class="layout">
-      <aside class="sidebar">
+    <div class="mobile-tabs mobile-only">
+      <button type="button" class="tab active" data-pane="chat">Chat</button>
+      <button type="button" class="tab" data-pane="org">Org</button>
+      <button type="button" class="tab" data-pane="tasks">Tasks</button>
+    </div>
+
+    <main class="layout" id="main-layout">
+      <aside class="sidebar" id="sidebar-pane" data-pane="org">
         <div class="panel-head">
           <h2>Organisation</h2>
           <button id="btn-refresh" class="btn btn-xs" title="Refresh">↻</button>
@@ -51,25 +68,32 @@
         </div>
       </aside>
 
-      <section class="center">
-        <div class="panel-head">
-          <h2 id="channel-title">Channel</h2>
-          <span class="muted" id="channel-sub">Select or bootstrap an org</span>
+      <section class="center" id="chat-pane" data-pane="chat">
+        <div class="panel-head channel-head">
+          <div>
+            <h2 id="channel-title">Channel</h2>
+            <span class="muted" id="channel-sub">Select or bootstrap an org</span>
+          </div>
         </div>
         <div id="messages" class="messages"></div>
-        <form id="compose" class="compose">
-          <select id="compose-agent" title="Post as agent"></select>
-          <input id="compose-reply-to" type="hidden" value="" />
-          <input id="compose-text" type="text" placeholder="Post a message… (reply via ↩ on a message)" autocomplete="off" />
-          <button type="submit" class="btn btn-primary">Send</button>
-        </form>
         <div id="reply-banner" class="reply-banner hidden">
           Replying to <span id="reply-preview"></span>
           <button type="button" id="reply-cancel" class="btn btn-xs">Cancel</button>
         </div>
+        <form id="compose" class="compose">
+          <div class="compose-meta">
+            <select id="compose-agent" title="Post as agent"></select>
+            <span class="compose-model muted" id="compose-model-hint"></span>
+          </div>
+          <input id="compose-reply-to" type="hidden" value="" />
+          <div class="compose-row">
+            <input id="compose-text" type="text" placeholder="Message the channel…" autocomplete="off" />
+            <button type="submit" class="btn btn-primary">Send</button>
+          </div>
+        </form>
       </section>
 
-      <aside class="rightbar">
+      <aside class="rightbar" id="tasks-pane" data-pane="tasks">
         <div class="panel-head"><h2>Tasks</h2></div>
         <form id="task-form" class="task-form">
           <label>CEO Directive</label>
@@ -90,14 +114,23 @@
   <dialog id="settings-dialog">
     <form method="dialog" id="settings-form" class="settings">
       <h2>OpenAI / LLM Settings</h2>
-      <p class="muted">Full power: set an API key for real tool calling. Works with OpenAI, OpenRouter, Azure, Ollama (compatible <code>base_url</code>). Leave empty for offline mock.</p>
+      <p class="muted">Paste an OpenAI-compatible <code>base_url</code> + API key, then <strong>Fetch models</strong>. Works with OpenAI, OpenRouter, Azure, Ollama. Leave key empty for offline mock.</p>
       <label>OpenAI API Key
         <input id="cfg-key" type="password" placeholder="sk-… (optional)" autocomplete="off" />
       </label>
       <label>API Base URL
         <input id="cfg-base" type="url" placeholder="https://api.openai.com/v1" />
       </label>
-      <label>Model
+      <p class="hint muted">Trailing slash is stripped. If you omit <code>/v1</code>, the server may append it for known hosts.</p>
+      <div class="model-fetch-row">
+        <label class="grow">Model
+          <select id="cfg-model-select">
+            <option value="">— fetch or type below —</option>
+          </select>
+        </label>
+        <button type="button" class="btn" id="cfg-fetch-models">Fetch models</button>
+      </div>
+      <label>Model id (saved)
         <input id="cfg-model" type="text" placeholder="gpt-4o-mini" />
       </label>
       <div class="dialog-actions" style="justify-content:space-between">

@@ -12,6 +12,46 @@ from grok_org_os.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+MOCK_MODELS = [
+    {"id": "gpt-4o-mini", "owned_by": "openai"},
+    {"id": "gpt-4o", "owned_by": "openai"},
+    {"id": "gpt-4.1-mini", "owned_by": "openai"},
+    {"id": "gpt-4.1", "owned_by": "openai"},
+    {"id": "o3-mini", "owned_by": "openai"},
+    {"id": "claude-3.5-sonnet", "owned_by": "anthropic"},
+]
+
+
+def normalize_base_url(url: str) -> str:
+    """Strip trailing slash; append /v1 when user pastes a bare provider host."""
+    u = (url or "").strip().rstrip("/")
+    if not u:
+        return "https://api.openai.com/v1"
+    # Already has a version path
+    lower = u.lower()
+    if lower.endswith("/v1") or "/v1/" in lower or lower.endswith("/v1beta") or "/openai/deployments" in lower:
+        return u
+    # Common OpenAI-compatible hosts without /v1
+    hosts = (
+        "api.openai.com",
+        "openrouter.ai/api",
+        "api.groq.com/openai",
+        "api.together.xyz",
+        "api.fireworks.ai/inference",
+    )
+    for h in hosts:
+        if lower.rstrip("/").endswith(h) or f"://{h}" in lower or lower.endswith(h):
+            return f"{u}/v1"
+    # Heuristic: bare https://host or https://host/api → try /v1
+    from urllib.parse import urlparse
+
+    parsed = urlparse(u if "://" in u else f"https://{u}")
+    path = (parsed.path or "").rstrip("/")
+    if path in ("", "/api"):
+        return f"{u}/v1"
+    return u
+
+
 
 def _role_hint(system: str) -> str:
     s = system.lower()
@@ -45,7 +85,7 @@ class LLMClient:
     ) -> None:
         settings = get_settings()
         self.api_key = api_key if api_key is not None else settings.openai_api_key
-        self.base_url = (base_url or settings.openai_base_url).rstrip("/")
+        self.base_url = normalize_base_url(base_url or settings.openai_base_url)
         self.model = model or settings.openai_model
 
     @property
@@ -166,25 +206,167 @@ class LLMClient:
             final = final or (msgs[-1].get("content") if msgs else "") or ""
         return final or ""
 
-    def test_connection(self) -> dict[str, Any]:
-        """Ping the model with a tiny completion."""
+    def list_models(self) -> dict[str, Any]:
+        """GET {base_url}/models — curated mock list when no API key."""
         if self.use_mock:
-            return {"ok": True, "mode": "mock", "model": self.model, "message": "Mock LLM ready"}
-        try:
-            msg = self.chat_message(
-                [{"role": "user", "content": "Reply with exactly: pong"}],
-                max_tokens=16,
-                temperature=0,
-            )
             return {
                 "ok": True,
+                "mode": "mock",
+                "base_url": self.base_url,
+                "note": "No API key set — showing curated mock models. Add a key to fetch from the provider.",
+                "models": list(MOCK_MODELS),
+                "data": list(MOCK_MODELS),
+            }
+        url = f"{self.base_url}/models"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.get(url, headers=headers)
+                if resp.status_code == 401:
+                    return {
+                        "ok": False,
+                        "mode": "live",
+                        "base_url": self.base_url,
+                        "error": "401 Unauthorized — check API key",
+                        "status_code": 401,
+                        "models": [],
+                        "data": [],
+                    }
+                if resp.status_code == 404:
+                    return {
+                        "ok": False,
+                        "mode": "live",
+                        "base_url": self.base_url,
+                        "error": (
+                            f"404 Not Found at {url}. "
+                            "Check base URL (try with or without trailing /v1; trailing slash is stripped)."
+                        ),
+                        "status_code": 404,
+                        "models": [],
+                        "data": [],
+                    }
+                if resp.status_code >= 400:
+                    detail = (resp.text or "")[:300]
+                    return {
+                        "ok": False,
+                        "mode": "live",
+                        "base_url": self.base_url,
+                        "error": f"HTTP {resp.status_code}: {detail}",
+                        "status_code": resp.status_code,
+                        "models": [],
+                        "data": [],
+                    }
+                payload = resp.json()
+                raw = payload.get("data") if isinstance(payload, dict) else None
+                if not isinstance(raw, list):
+                    raw = payload if isinstance(payload, list) else []
+                models = []
+                for item in raw:
+                    if isinstance(item, dict) and item.get("id"):
+                        models.append(
+                            {
+                                "id": item["id"],
+                                "owned_by": item.get("owned_by") or item.get("ownedBy") or "",
+                            }
+                        )
+                    elif isinstance(item, str):
+                        models.append({"id": item, "owned_by": ""})
+                models.sort(key=lambda m: m["id"].lower())
+                return {
+                    "ok": True,
+                    "mode": "live",
+                    "base_url": self.base_url,
+                    "models": models,
+                    "data": models,
+                    "count": len(models),
+                }
+        except httpx.ConnectError as exc:
+            return {
+                "ok": False,
+                "mode": "live",
+                "base_url": self.base_url,
+                "error": f"Connection failed to {url}: {exc}. Check base URL / network.",
+                "models": [],
+                "data": [],
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "ok": False,
+                "mode": "live",
+                "base_url": self.base_url,
+                "error": str(exc),
+                "models": [],
+                "data": [],
+            }
+
+    def test_connection(self) -> dict[str, Any]:
+        """Ping the model with a tiny completion; surface clear HTTP errors."""
+        if self.use_mock:
+            return {"ok": True, "mode": "mock", "model": self.model, "message": "Mock LLM ready"}
+        url = f"{self.base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": "Reply with exactly: pong"}],
+            "max_tokens": 16,
+            "temperature": 0,
+        }
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.post(url, headers=headers, json=payload)
+                if resp.status_code == 401:
+                    return {
+                        "ok": False,
+                        "mode": "live",
+                        "model": self.model,
+                        "base_url": self.base_url,
+                        "error": "401 Unauthorized — API key rejected. Check key and provider.",
+                        "status_code": 401,
+                    }
+                if resp.status_code == 404:
+                    return {
+                        "ok": False,
+                        "mode": "live",
+                        "model": self.model,
+                        "base_url": self.base_url,
+                        "error": (
+                            f"404 Not Found at {url}. "
+                            "Normalize base URL (no trailing slash; often needs /v1). "
+                            "Example: https://api.openai.com/v1 or https://openrouter.ai/api/v1"
+                        ),
+                        "status_code": 404,
+                    }
+                if resp.status_code >= 400:
+                    return {
+                        "ok": False,
+                        "mode": "live",
+                        "model": self.model,
+                        "base_url": self.base_url,
+                        "error": f"HTTP {resp.status_code}: {(resp.text or '')[:400]}",
+                        "status_code": resp.status_code,
+                    }
+                data = resp.json()
+                msg = data["choices"][0]["message"]
+                return {
+                    "ok": True,
+                    "mode": "live",
+                    "model": self.model,
+                    "base_url": self.base_url,
+                    "message": (msg.get("content") or "")[:200],
+                }
+        except httpx.ConnectError as exc:
+            return {
+                "ok": False,
                 "mode": "live",
                 "model": self.model,
                 "base_url": self.base_url,
-                "message": (msg.get("content") or "")[:200],
+                "error": f"Connection failed: {exc}. Wrong host or offline.",
             }
         except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "mode": "live", "error": str(exc)}
+            return {"ok": False, "mode": "live", "model": self.model, "base_url": self.base_url, "error": str(exc)}
 
     def _mock_message(
         self,

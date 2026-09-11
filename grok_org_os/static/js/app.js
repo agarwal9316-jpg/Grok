@@ -1,4 +1,4 @@
-/* Grok Org OS 2.0 — full-power desk UI */
+/* Grok Org OS 2.1 — Grok-class desk + model picker */
 (() => {
   const state = {
     org: null,
@@ -15,6 +15,10 @@
     selectedAgent: null,
     replyTo: null,
     pollTimer: null,
+    models: [],
+    currentModel: "gpt-4o-mini",
+    hasKey: false,
+    config: null,
   };
 
   const $ = (sel) => document.querySelector(sel);
@@ -97,26 +101,144 @@
       .replace(/"/g, "&quot;");
   }
 
+  function syncModelUI(model) {
+    state.currentModel = model || state.currentModel || "gpt-4o-mini";
+    const picker = $("#model-picker");
+    if (picker) {
+      ensureModelOption(picker, state.currentModel);
+      picker.value = state.currentModel;
+    }
+    const cfg = $("#cfg-model");
+    if (cfg) cfg.value = state.currentModel;
+    const sel = $("#cfg-model-select");
+    if (sel) {
+      ensureModelOption(sel, state.currentModel);
+      if ([...sel.options].some((o) => o.value === state.currentModel)) {
+        sel.value = state.currentModel;
+      }
+    }
+    const hint = $("#compose-model-hint");
+    if (hint) {
+      hint.textContent = state.hasKey
+        ? `Using ${state.currentModel}`
+        : `Mock · ${state.currentModel}`;
+    }
+    const badge = $("#llm-badge");
+    if (badge) {
+      if (state.hasKey) {
+        badge.textContent = `Live · ${state.currentModel}`;
+        badge.classList.add("live");
+      } else {
+        badge.textContent = `Mock · ${state.currentModel}`;
+        badge.classList.remove("live");
+      }
+    }
+  }
+
+  function ensureModelOption(selectEl, id) {
+    if (!selectEl || !id) return;
+    if (![...selectEl.options].some((o) => o.value === id)) {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = id;
+      selectEl.appendChild(opt);
+    }
+  }
+
+  function fillModelSelects(models, selected) {
+    const ids = (models || []).map((m) => (typeof m === "string" ? m : m.id)).filter(Boolean);
+    state.models = ids;
+    const pick = selected || state.currentModel || ids[0] || "gpt-4o-mini";
+    ["#model-picker", "#cfg-model-select"].forEach((sel) => {
+      const el = $(sel);
+      if (!el) return;
+      const keepFirst = el.id === "cfg-model-select";
+      const first = keepFirst ? el.options[0]?.outerHTML || '<option value="">— fetch or type below —</option>' : "";
+      el.innerHTML = keepFirst ? first : "";
+      ids.forEach((id) => {
+        const opt = document.createElement("option");
+        opt.value = id;
+        opt.textContent = id;
+        el.appendChild(opt);
+      });
+      ensureModelOption(el, pick);
+      el.value = pick;
+    });
+    syncModelUI(pick);
+  }
+
   async function loadSettingsBadge() {
     try {
       const s = await api("/api/config");
-      const badge = $("#llm-badge");
-      if (s.has_llm_key) {
-        badge.textContent = `Live · ${s.openai_model}`;
-        badge.classList.add("live");
-      } else {
-        badge.textContent = "Mock LLM";
-        badge.classList.remove("live");
-      }
+      state.config = s;
+      state.hasKey = !!s.has_llm_key;
+      state.currentModel = s.openai_model || "gpt-4o-mini";
       $("#cfg-base").value = s.openai_base_url || "";
       $("#cfg-model").value = s.openai_model || "";
       $("#cfg-key").value = "";
       $("#cfg-key").placeholder = s.api_key_set
         ? "•••••••• (saved — leave blank to keep)"
         : "sk-… (required for full power)";
+      syncModelUI(state.currentModel);
+      // Prefill picker from /api/models (mock or live)
+      try {
+        const m = await api("/api/models");
+        if (m && (m.models || m.data)) {
+          fillModelSelects(m.models || m.data, state.currentModel);
+        } else {
+          ensureModelOption($("#model-picker"), state.currentModel);
+        }
+      } catch (_) {
+        ensureModelOption($("#model-picker"), state.currentModel);
+      }
     } catch (e) {
       console.warn(e);
     }
+  }
+
+  async function saveModel(model) {
+    if (!model) return;
+    const s = await api("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ openai_model: model }),
+    });
+    state.currentModel = s.openai_model || model;
+    state.hasKey = !!s.has_llm_key;
+    syncModelUI(state.currentModel);
+    return s;
+  }
+
+  async function fetchModelsFromProvider({ saveFirst } = {}) {
+    const out = $("#cfg-test-result");
+    if (out) {
+      out.classList.remove("hidden");
+      out.textContent = "Fetching models…";
+    }
+    if (saveFirst) {
+      const payload = {
+        openai_base_url: ($("#cfg-base").value || "").trim() || undefined,
+        openai_model: ($("#cfg-model").value || "").trim() || undefined,
+      };
+      const key = ($("#cfg-key").value || "").trim();
+      if (key) payload.openai_api_key = key;
+      if (payload.openai_base_url || payload.openai_api_key || payload.openai_model) {
+        await api("/api/settings", { method: "PUT", body: JSON.stringify(payload) });
+      }
+    }
+    const res = await api("/api/models", { method: "POST", body: "{}" });
+    if (!res.ok && !(res.models || []).length) {
+      const err = res.error || "Failed to fetch models";
+      if (out) out.textContent = err;
+      throw new Error(err);
+    }
+    fillModelSelects(res.models || res.data || [], state.currentModel);
+    if (out) {
+      const note = res.note ? `\n${res.note}` : "";
+      out.textContent = res.ok
+        ? `Loaded ${(res.models || []).length} models (${res.mode})${note}`
+        : res.error || JSON.stringify(res, null, 2);
+    }
+    return res;
   }
 
   async function refreshAll() {
@@ -280,7 +402,7 @@
   function renderMessages() {
     const box = $("#messages");
     if (!state.messages.length) {
-      box.innerHTML = `<div class="empty-state"><strong>No messages yet</strong>Post as CEO or hit <em>Run Demo</em> for tool-calling collaboration.</div>`;
+      box.innerHTML = `<div class="empty-state"><div class="empty-icon">💬</div><strong>Start a conversation</strong>Post as CEO, pick a model in the top bar, or hit <em>Run Demo</em> for live tool-calling collaboration.</div>`;
       return;
     }
     const wasAtBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
@@ -303,18 +425,20 @@
       if (m.parent_id && byId[m.parent_id]) {
         parentHint = `<div class="msg-parent">↩ ${esc((byId[m.parent_id].content || "").slice(0, 80))}</div>`;
       }
+      const rc = roleClass(agent);
       div.innerHTML = `
         ${parentHint}
-        <div class="msg-head">
-          <span class="avatar">${esc(initials(name))}</span>
-          <span class="name">${esc(name)}</span>
-          <span class="role">${esc(role)}</span>
-          <span class="time">${esc(formatTime(m.created_at))}</span>
-          <button type="button" class="btn btn-xs reply-btn" data-id="${m.id}" title="Reply">↩</button>
+        <div class="msg-avatar-col"><span class="avatar ${esc(rc)}">${esc(initials(name))}</span></div>
+        <div class="msg-bubble">
+          <div class="msg-head">
+            <span class="name">${esc(name)}</span>
+            <span class="role">${esc(role)}</span>
+            <span class="time">${esc(formatTime(m.created_at))}</span>
+            <button type="button" class="btn btn-xs reply-btn" data-id="${m.id}" title="Reply">↩</button>
+          </div>
+          <div class="msg-body">${esc(m.content)}</div>
         </div>
-        <div class="msg-body">${esc(m.content)}</div>
       `;
-      div.querySelector(".avatar").classList.add(roleClass(agent));
       div.querySelector(".reply-btn").addEventListener("click", () => setReply(m));
       box.appendChild(div);
       (children[m.id] || []).forEach((c) => renderOne(c, depth + 1));
@@ -655,9 +779,80 @@
   });
 
   $("#btn-settings").addEventListener("click", async () => {
+    closeMore();
     await loadSettingsBadge();
     $("#cfg-test-result").classList.add("hidden");
     $("#settings-dialog").showModal();
+  });
+
+  $("#cfg-fetch-models")?.addEventListener("click", async () => {
+    try {
+      await fetchModelsFromProvider({ saveFirst: true });
+      toast("Models loaded", "success");
+    } catch (e) {
+      toast(e.message, "error");
+    }
+  });
+
+  $("#cfg-model-select")?.addEventListener("change", (ev) => {
+    const v = ev.target.value;
+    if (v) {
+      $("#cfg-model").value = v;
+      syncModelUI(v);
+    }
+  });
+
+  $("#model-picker")?.addEventListener("change", async (ev) => {
+    const model = ev.target.value;
+    try {
+      await saveModel(model);
+      toast(`Model → ${model}`, "success");
+    } catch (e) {
+      toast(e.message, "error");
+      syncModelUI(state.currentModel);
+    }
+  });
+
+  function closeMore() {
+    $("#more-dropdown")?.classList.add("hidden");
+    const btn = $("#btn-more");
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  }
+
+  $("#btn-more")?.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    const dd = $("#more-dropdown");
+    const open = dd && !dd.classList.contains("hidden");
+    if (open) closeMore();
+    else {
+      dd?.classList.remove("hidden");
+      $("#btn-more")?.setAttribute("aria-expanded", "true");
+    }
+  });
+  document.addEventListener("click", (ev) => {
+    if (!$(".more-menu")?.contains(ev.target)) closeMore();
+  });
+
+  // Mobile pane tabs
+  $$(".mobile-tabs .tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      $$(".mobile-tabs .tab").forEach((t) => t.classList.remove("active"));
+      tab.classList.add("active");
+      const pane = tab.dataset.pane || "chat";
+      const layout = $("#main-layout");
+      if (!layout) return;
+      layout.classList.remove("show-chat", "show-org", "show-tasks");
+      layout.classList.add(`show-${pane}`);
+    });
+  });
+  $("#btn-sidebar-toggle")?.addEventListener("click", () => {
+    const layout = $("#main-layout");
+    const showing = layout?.classList.contains("show-org");
+    layout?.classList.remove("show-chat", "show-org", "show-tasks");
+    layout?.classList.add(showing ? "show-chat" : "show-org");
+    $$(".mobile-tabs .tab").forEach((t) => {
+      t.classList.toggle("active", t.dataset.pane === (showing ? "chat" : "org"));
+    });
   });
 
   $("#cfg-test").addEventListener("click", async () => {
@@ -665,8 +860,22 @@
     out.classList.remove("hidden");
     out.textContent = "Testing…";
     try {
+      // Save base/key first so test uses latest form values
+      const payload = {
+        openai_base_url: $("#cfg-base").value.trim() || undefined,
+        openai_model: $("#cfg-model").value.trim() || undefined,
+      };
+      const key = $("#cfg-key").value.trim();
+      if (key) payload.openai_api_key = key;
+      if (payload.openai_base_url || payload.openai_api_key || payload.openai_model) {
+        await api("/api/settings", { method: "PUT", body: JSON.stringify(payload) });
+      }
       const res = await api("/api/settings/test", { method: "POST", body: "{}" });
-      out.textContent = JSON.stringify(res, null, 2);
+      if (res && res.ok === false) {
+        out.textContent = res.error || JSON.stringify(res, null, 2);
+      } else {
+        out.textContent = JSON.stringify(res, null, 2);
+      }
     } catch (e) {
       out.textContent = e.message;
     }
@@ -685,7 +894,9 @@
     const key = $("#cfg-key").value.trim();
     if (key) payload.openai_api_key = key;
     try {
-      await api("/api/settings", { method: "PUT", body: JSON.stringify(payload) });
+      const s = await api("/api/settings", { method: "PUT", body: JSON.stringify(payload) });
+      state.hasKey = !!s.has_llm_key;
+      state.currentModel = s.openai_model || payload.openai_model;
       toast("Settings saved", "success");
       $("#settings-dialog").close();
       await loadSettingsBadge();
@@ -695,12 +906,14 @@
   });
 
   $("#btn-connectors").addEventListener("click", async () => {
+    closeMore();
     await loadConnectors();
     $("#connectors-dialog").showModal();
   });
   $("#connectors-close").addEventListener("click", () => $("#connectors-dialog").close());
 
   $("#btn-routines").addEventListener("click", async () => {
+    closeMore();
     await loadRoutines();
     $("#routines-dialog").showModal();
   });
@@ -740,6 +953,7 @@
   });
 
   $("#btn-approvals").addEventListener("click", async () => {
+    closeMore();
     if (state.org) {
       state.approvals = await api(`/api/approvals?organisation_id=${state.org.id}`);
     }
@@ -749,6 +963,7 @@
   $("#approvals-close").addEventListener("click", () => $("#approvals-dialog").close());
 
   $("#btn-files").addEventListener("click", async () => {
+    closeMore();
     await loadFiles();
     $("#files-dialog").showModal();
   });
