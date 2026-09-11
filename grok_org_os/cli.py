@@ -1,0 +1,150 @@
+"""Typer CLI: grok-org bootstrap | serve | run-demo."""
+
+from __future__ import annotations
+
+import os
+from typing import Optional
+
+import typer
+import uvicorn
+
+from grok_org_os.bootstrap import bootstrap_sample_org
+from grok_org_os.config import get_settings
+from grok_org_os.db import SessionLocal, init_db
+from grok_org_os.llm import LLMClient, set_llm_client
+from grok_org_os.models import AgentRole, Message, Task, TaskStatus
+from grok_org_os.task_runner import TaskRunner
+
+app = typer.Typer(
+    name="grok-org",
+    help="Grok Org OS — portable multi-agent AI organization platform",
+    no_args_is_help=True,
+)
+
+
+@app.command()
+def bootstrap(
+    name: str = typer.Option("Grok Demo Org", help="Organisation name"),
+) -> None:
+    """Create sample org: CEO (human), CoS, Ops/Research/Comms agents, HQ channel."""
+    init_db()
+    db = SessionLocal()
+    try:
+        data = bootstrap_sample_org(db, name=name)
+        org = data["organisation"]
+        typer.echo(f"Bootstrapped organisation #{org.id}: {org.name}")
+        typer.echo(f"  Channel: {data['channel'].name} (#{data['channel'].id})")
+        for key, agent in data["agents"].items():
+            typer.echo(
+                f"  Agent [{key}]: {agent.name} role={agent.role.value} "
+                f"human={agent.is_human} id={agent.id}"
+            )
+        for tname, team in data["teams"].items():
+            typer.echo(f"  Team: {tname} (#{team.id})")
+    finally:
+        db.close()
+
+
+@app.command()
+def serve(
+    host: Optional[str] = typer.Option(None, help="Bind host"),
+    port: Optional[int] = typer.Option(None, help="Bind port"),
+    reload: bool = typer.Option(False, help="Auto-reload"),
+) -> None:
+    """Start the FastAPI server (OpenAPI at /docs)."""
+    settings = get_settings()
+    bind_host = host or settings.host
+    bind_port = port or settings.port
+    init_db()
+    typer.echo(f"Serving Grok Org OS on http://{bind_host}:{bind_port}")
+    typer.echo("OpenAPI: /openapi.json  Swagger UI: /docs")
+    uvicorn.run(
+        "grok_org_os.api.app:app",
+        host=bind_host,
+        port=bind_port,
+        reload=reload,
+    )
+
+
+@app.command("run-demo")
+def run_demo(
+    title: str = typer.Option(
+        "Launch Q4 product pilot",
+        help="Demo task title",
+    ),
+    description: str = typer.Option(
+        "Coordinate Ops, Research, and Comms to prepare a Q4 product pilot plan.",
+        help="Demo task description",
+    ),
+) -> None:
+    """Create a task, assign to Chief of Staff, run collaboration, print messages."""
+    # Ensure mock LLM unless key is set
+    set_llm_client(LLMClient())
+    init_db()
+    db = SessionLocal()
+    try:
+        data = bootstrap_sample_org(db)
+        org = data["organisation"]
+        cos = data["agents"]["chief_of_staff"]
+        channel = data["channel"]
+        ceo = data["agents"]["ceo"]
+
+        # CEO posts the directive
+        runner = TaskRunner(db)
+        runner.post_message(
+            channel,
+            ceo,
+            f"Directive: {title}\n{description}\nPlease coordinate the teams.",
+        )
+
+        task = Task(
+            organisation_id=org.id,
+            title=title,
+            description=description,
+            status=TaskStatus.pending,
+            channel_id=channel.id,
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        typer.echo(f"=== Demo: org={org.name} task=#{task.id} ===")
+        typer.echo(f"Assigning to {cos.name} and running collaboration (mock LLM ok)...\n")
+
+        result = runner.assign_task(task, cos, channel, run=True)
+
+        messages = (
+            db.query(Message)
+            .filter(Message.channel_id == channel.id)
+            .order_by(Message.id)
+            .all()
+        )
+        typer.echo("--- Channel messages ---")
+        for msg in messages:
+            agent = msg.agent
+            role = agent.role.value if agent else "?"
+            name = agent.name if agent else "?"
+            typer.echo(f"[{msg.id}] {name} ({role}):")
+            typer.echo(f"  {msg.content}\n")
+
+        typer.echo("--- Task summary ---")
+        typer.echo(f"Parent task #{result.id} status={result.status.value}")
+        if result.result:
+            typer.echo(f"Result:\n{result.result}")
+
+        subs = db.query(Task).filter(Task.parent_task_id == result.id).all()
+        for sub in subs:
+            assignee = sub.assignee.name if sub.assignee else "?"
+            typer.echo(f"  Subtask #{sub.id} [{assignee}] status={sub.status.value}")
+
+        typer.echo("\nDemo complete.")
+    finally:
+        db.close()
+
+
+def main() -> None:
+    app()
+
+
+if __name__ == "__main__":
+    main()
