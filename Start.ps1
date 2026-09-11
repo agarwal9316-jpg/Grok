@@ -1,9 +1,9 @@
-# Grok Org OS — PowerShell portable launcher (Windows)
+# N.E.H.A — PowerShell portable launcher (Windows)
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
 
 Write-Host "========================================"
-Write-Host "  Grok Org OS 2.0 — Full Power Desk"
+Write-Host "  N.E.H.A — Multi-agent org desk"
 Write-Host "========================================"
 Write-Host "Portable Windows app. Set OPENAI_API_KEY in .env or GUI for live tool calling."
 Write-Host ""

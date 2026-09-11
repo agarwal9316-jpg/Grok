@@ -78,7 +78,7 @@ object UpdateChecker {
                 connectTimeout = 10_000
                 readTimeout = 10_000
                 setRequestProperty("Accept", "application/vnd.github+json")
-                setRequestProperty("User-Agent", "GrokOrgOS-Android")
+                setRequestProperty("User-Agent", "NEHA-Android")
             }
             try {
                 val code = conn.responseCode
@@ -101,7 +101,7 @@ object UpdateChecker {
             val conn = (URL(FALLBACK_JSON_URL).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 10_000
                 readTimeout = 10_000
-                setRequestProperty("User-Agent", "GrokOrgOS-Android")
+                setRequestProperty("User-Agent", "NEHA-Android")
                 setRequestProperty("Accept", "application/json")
             }
             try {

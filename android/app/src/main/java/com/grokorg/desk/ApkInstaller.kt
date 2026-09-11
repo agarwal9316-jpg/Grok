@@ -60,7 +60,7 @@ object ApkInstaller {
             readTimeout = 60_000
             instanceFollowRedirects = true
             setRequestProperty("Accept", "application/octet-stream,*/*")
-            setRequestProperty("User-Agent", "GrokOrgOS-Android")
+            setRequestProperty("User-Agent", "NEHA-Android")
         }
         try {
             val code = conn.responseCode

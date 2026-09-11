@@ -1,10 +1,16 @@
-# Grok Org OS 2.1 — Grok-class desk + model picker
+# N.E.H.A 2.1 — Multi-agent org desk
 
 Portable multi-agent AI organisation platform with **real OpenAI tool calling**, concurrent agent workers, connectors (files / web / email / REST), CEO approvals, workspace file drops, scheduled routines, and a **Grok-like chat desk** with live **model fetch + topbar picker**.
 
 The **PC / Windows app is first-class** (double-click `Start.bat`). Android APK is a standalone on-device mirror of the same desk UI + API.
 
 ---
+
+## What’s new in 2.1.4
+
+- Product rename: **N.E.H.A** (display name); package id `com.grokorg.desk` unchanged for update continuity
+- APK artifacts: `NEHA-2.1.4-debug.apk` (+ `GrokOrgOS-2.1.4-debug.apk` compat copy)
+- Android **2.1.4** (versionCode 9)
 
 ## What’s new in 2.1.3
 
@@ -27,7 +33,7 @@ The **PC / Windows app is first-class** (double-click `Start.bat`). Android APK 
 - Clear connection errors (401 / 404 / wrong trailing slash / missing `/v1`)
 - Base URL normalization (strip trailing `/`; smart `/v1` append for known hosts)
 - Polished desk: avatar bubbles, sticky compose, More menu, mobile WebView tabs
-- Android **2.1.3** (versionCode 8) mirrors `/api/models` on-device
+- Android **2.1.4** (versionCode 9) mirrors `/api/models` on-device
 
 ---
 
@@ -94,7 +100,7 @@ Do these after `Start.bat` **or** installing the Android APK. Every item is impl
 | 7 | **Offline mock** | Clear API key → Save → badge `Mock · …` → Run Demo still works with tool-calling mock. `/api/models` returns curated list + note. |
 | 8 | **Android in-app update** | Menu → Check for updates → Download & Install (GitHub APK, prefers `*debug*.apk`). |
 | 9 | **Tests green** | `pip install -e ".[dev]" && pytest -q` — includes `/api/models` (mock httpx). |
-| 10 | **Ship** | `Start.bat` on PC; APK `android/dist/GrokOrgOS-2.1.3-debug.apk`; GitHub release `v2.1.3`. |
+| 10 | **Ship** | `Start.bat` on PC; APK `android/dist/NEHA-2.1.4-debug.apk`; GitHub release `v2.1.4`. |
 
 ### Surfaces
 
@@ -119,7 +125,7 @@ pytest -q
 
 ## Android standalone
 
-APK: **`android/dist/GrokOrgOS-2.1.3-debug.apk`** (versionName **2.1.3**, versionCode **8**).
+APK: **`android/dist/NEHA-2.1.4-debug.apk`** (versionName **2.1.4**, versionCode **9**). Compat copy: `GrokOrgOS-2.1.4-debug.apk`.
 
 - On-device NanoHTTPD backend + same desk UI (assets synced from `grok_org_os/static/`)
 - `/api/models` fetches remote models with `HttpURLConnection` when key is set

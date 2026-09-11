@@ -19,7 +19,7 @@ from grok_org_os.task_runner import TaskRunner
 
 app = typer.Typer(
     name="grok-org",
-    help="Grok Org OS — portable multi-agent AI organization platform",
+    help="N.E.H.A — portable multi-agent AI organization platform",
     no_args_is_help=True,
 )
 
@@ -67,7 +67,7 @@ def serve(
     bind_port = port or settings.port
     init_db()
     url = _serve_url(bind_host, bind_port)
-    typer.echo(f"Serving Grok Org OS GUI on {url}")
+    typer.echo(f"Serving N.E.H.A GUI on {url}")
     typer.echo(f"API: {url}/api  ·  OpenAPI: {url}/openapi.json  ·  Swagger: {url}/docs")
 
     if open_browser:
@@ -128,7 +128,7 @@ def desktop(
         return
 
     typer.echo(f"Desktop window → {url}")
-    window = webview.create_window("Grok Org OS", url, width=1280, height=800)
+    window = webview.create_window("N.E.H.A", url, width=1280, height=800)
     webview.start()
     _ = window
 

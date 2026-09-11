@@ -275,7 +275,7 @@ class LLMClient:
         url = f"{self.base_url.rstrip('/')}/models"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
-            "User-Agent": "GrokOrgOS/2.1.3",
+            "User-Agent": "NEHA/2.1.4",
             "Accept": "application/json",
         }
         try:
@@ -362,7 +362,7 @@ class LLMClient:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "User-Agent": "GrokOrgOS/2.1.3",
+            "User-Agent": "NEHA/2.1.4",
             "Accept": "application/json",
         }
         payload = {

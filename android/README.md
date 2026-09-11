@@ -1,4 +1,4 @@
-# Grok Org OS Android 2.1.3
+# N.E.H.A Android 2.1.4
 
 Fully **standalone** APK: on-device NanoHTTPD backend + desk WebView UI.
 
@@ -14,7 +14,7 @@ Fully **standalone** APK: on-device NanoHTTPD backend + desk WebView UI.
 
 ```bash
 ./build-apk.sh
-# → dist/GrokOrgOS-2.1.3-debug.apk
+# → dist/NEHA-2.1.4-debug.apk
 ```
 
 Requires Android SDK + JDK 17+.

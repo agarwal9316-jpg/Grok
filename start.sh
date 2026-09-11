@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 echo "========================================"
-echo "  Grok Org OS 2.0 — Full Power Desk"
+echo "  N.E.H.A — Multi-agent org desk"
 echo "========================================"
 echo "Set OPENAI_API_KEY in .env for live tool calling."
 if [[ ! -d .venv ]]; then

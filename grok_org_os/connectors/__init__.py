@@ -1,4 +1,4 @@
-"""Pluggable connectors for Grok Org OS."""
+"""Pluggable connectors for N.E.H.A."""
 
 from grok_org_os.connectors.registry import get_connector, list_connectors, register_builtins
 

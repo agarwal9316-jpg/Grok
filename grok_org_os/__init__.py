@@ -1,3 +1,3 @@
-"""Grok Org OS — portable multi-agent AI organization platform."""
+"""N.E.H.A — portable multi-agent AI organization platform."""
 
-__version__ = "2.1.3"
+__version__ = "2.1.4"

@@ -8,7 +8,7 @@ def test_root_serves_html(client):
     assert resp.status_code == 200
     assert "text/html" in resp.headers.get("content-type", "")
     body = resp.text
-    assert "Grok Org OS" in body
+    assert "N.E.H.A" in body
     assert "Bootstrap" in body
     assert "Run Demo" in body
     assert "/static/js/app.js" in body

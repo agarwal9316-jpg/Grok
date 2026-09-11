@@ -27,21 +27,26 @@ if [[ -d "$STATIC_SRC" ]]; then
   fi
 fi
 
-VERSION_NAME="2.1.3"
+VERSION_NAME="2.1.4"
 
 chmod +x ./gradlew
 ./gradlew assembleDebug --no-daemon
 mkdir -p dist
-cp -f app/build/outputs/apk/debug/app-debug.apk "dist/GrokOrgOS-${VERSION_NAME}-debug.apk"
-echo "Built: $ROOT/dist/GrokOrgOS-${VERSION_NAME}-debug.apk"
+cp -f app/build/outputs/apk/debug/app-debug.apk "dist/NEHA-${VERSION_NAME}-debug.apk"
+# Compat copy for older updater bookmarks / docs that still expect GrokOrgOS-*
+cp -f "dist/NEHA-${VERSION_NAME}-debug.apk" "dist/GrokOrgOS-${VERSION_NAME}-debug.apk"
+echo "Built: $ROOT/dist/NEHA-${VERSION_NAME}-debug.apk"
+echo "Compat: $ROOT/dist/GrokOrgOS-${VERSION_NAME}-debug.apk"
 
 ./gradlew assembleRelease --no-daemon || true
 if [[ -f app/build/outputs/apk/release/app-release-unsigned.apk ]]; then
-  cp -f app/build/outputs/apk/release/app-release-unsigned.apk "dist/GrokOrgOS-${VERSION_NAME}-release-unsigned.apk"
-  echo "Built: $ROOT/dist/GrokOrgOS-${VERSION_NAME}-release-unsigned.apk"
+  cp -f app/build/outputs/apk/release/app-release-unsigned.apk "dist/NEHA-${VERSION_NAME}-release-unsigned.apk"
+  cp -f "dist/NEHA-${VERSION_NAME}-release-unsigned.apk" "dist/GrokOrgOS-${VERSION_NAME}-release-unsigned.apk"
+  echo "Built: $ROOT/dist/NEHA-${VERSION_NAME}-release-unsigned.apk"
 elif [[ -f app/build/outputs/apk/release/app-release.apk ]]; then
-  cp -f app/build/outputs/apk/release/app-release.apk "dist/GrokOrgOS-${VERSION_NAME}-release.apk"
-  echo "Built: $ROOT/dist/GrokOrgOS-${VERSION_NAME}-release.apk"
+  cp -f app/build/outputs/apk/release/app-release.apk "dist/NEHA-${VERSION_NAME}-release.apk"
+  cp -f "dist/NEHA-${VERSION_NAME}-release.apk" "dist/GrokOrgOS-${VERSION_NAME}-release.apk"
+  echo "Built: $ROOT/dist/NEHA-${VERSION_NAME}-release.apk"
 fi
 
 ls -lh dist/

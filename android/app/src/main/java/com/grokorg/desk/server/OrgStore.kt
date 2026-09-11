@@ -102,7 +102,7 @@ class OrgStore(context: Context) {
             .put("database_url", "sqlite:///grok_org_os.db")
             .put("host", "127.0.0.1")
             .put("port", LocalBackend.DEFAULT_PORT)
-            .put("version", "2.1.3")
+            .put("version", "2.1.4")
             .put("workspace_dir", "workspace")
     }
 
@@ -653,7 +653,7 @@ class OrgStore(context: Context) {
                     doOutput = true
                     setRequestProperty("Authorization", "Bearer $apiKey")
                     setRequestProperty("Content-Type", "application/json")
-                    setRequestProperty("User-Agent", "GrokOrgOS/2.1.3")
+                    setRequestProperty("User-Agent", "NEHA/2.1.4")
                     setRequestProperty("Accept", "application/json")
                 }
                 try {
@@ -732,7 +732,7 @@ class OrgStore(context: Context) {
                     readTimeout = 45_000
                     instanceFollowRedirects = true
                     setRequestProperty("Authorization", "Bearer $apiKey")
-                    setRequestProperty("User-Agent", "GrokOrgOS/2.1.3")
+                    setRequestProperty("User-Agent", "NEHA/2.1.4")
                     setRequestProperty("Accept", "application/json")
                 }
                 try {

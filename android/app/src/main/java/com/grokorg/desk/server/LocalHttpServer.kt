@@ -31,7 +31,7 @@ class LocalHttpServer(
 
             when {
                 uri == "/health" && method == Method.GET ->
-                    json(JSONObject().put("status", "ok").put("version", "2.1.3"))
+                    json(JSONObject().put("status", "ok").put("version", "2.1.4"))
 
                 uri == "/" && method == Method.GET ->
                     asset("www/index.html", "text/html")

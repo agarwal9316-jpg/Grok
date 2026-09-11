@@ -71,7 +71,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="Grok Org OS",
+        title="N.E.H.A",
         description="Portable multi-agent AI organization platform — full power v2",
         version=__version__,
         lifespan=lifespan,

@@ -2,9 +2,9 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 
-title Grok Org OS 2.0 — Full Power
+title N.E.H.A
 echo ========================================
-echo   Grok Org OS 2.0 — Full Power Desk
+echo   N.E.H.A — Multi-agent org desk
 echo ========================================
 echo.
 echo Portable Windows app — copy this folder anywhere.

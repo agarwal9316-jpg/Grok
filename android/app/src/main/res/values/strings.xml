@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Grok Org OS</string>
+    <string name="app_name">N.E.H.A</string>
     <string name="settings_title">Settings</string>
     <string name="desk_title">Desk</string>
     <string name="open_desk">Open Desk</string>
@@ -8,7 +8,7 @@
     <string name="backend_mode">Backend mode</string>
     <string name="mode_on_device">On-device (standalone) — recommended</string>
     <string name="mode_remote">Remote server URL (advanced)</string>
-    <string name="mode_on_device_hint">Runs the full Grok Org OS API + desk GUI on this phone. No PC required. Mock LLM works offline; paste an API key in the desk Settings for live models.</string>
+    <string name="mode_on_device_hint">Runs the full N.E.H.A API + desk GUI on this phone. No PC required. Mock LLM works offline; paste an API key in the desk Settings for live models.</string>
     <string name="mode_on_device_label">On-device · %1$s</string>
     <string name="mode_remote_label">Remote · %1$s</string>
     <string name="server_url">Remote server URL</string>
